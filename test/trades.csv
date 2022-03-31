@@ -1,0 +1,4 @@
+currency,interval,short,compound,buy_time,buy_price,sell_time,sell_price,stake,pl_abs,trade_status,opening_balance,closing_balance
+BTC,1m,False,True,1648722780000,47250.75,,,100,,TradeStatus.OPEN_FOR_PROFIT,500,
+BTC,1m,True,True,1648722780000,47250.76,,,100,,TradeStatus.OPEN_FOR_PROFIT,500,
+ETH,1m,False,True,1648722780000,3416.35,,,100,,TradeStatus.OPEN_FOR_PROFIT,500,
