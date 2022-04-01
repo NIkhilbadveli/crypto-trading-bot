@@ -3,12 +3,13 @@ import enum
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import time
 import matplotlib.pyplot as plt
 import websocket
 
 from trade_class import Trade, TradeStatus
 from get_data import get_historical_data
-from email_smtp import send_open_alert, send_close_alert
+from email_smtp import send_open_alert, send_close_alert, send_socket_disconnect
 
 
 class BinanceSocket:
@@ -33,6 +34,7 @@ class BinanceSocket:
         print("Socket connected!")
 
     def on_close(self, ws):
+        send_socket_disconnect()
         print("Socket disconnected!")
 
     def on_message(self, ws, message):
@@ -42,6 +44,7 @@ class BinanceSocket:
         try:
             self.bot.do_the_magic((close_time, close_price))
         except Exception as e:
+            send_socket_disconnect()
             print(e)
 
 
@@ -104,6 +107,8 @@ class NaiveBot:
         print("Downloading price data... Done")
 
         self.run_params = params
+        self.run_params.currency = currency
+        self.run_params.interval = interval
         self.total_trading_period = (datetime.fromtimestamp(self.price_data[-1, 0] / 1000.0) - datetime.fromtimestamp(
             self.price_data[0, 0] / 1000.0)).total_seconds() / 86400
 
@@ -168,6 +173,8 @@ class NaiveBot:
                                                stake=self.current_stake)
             self.present_working_trade.opening_balance = self.current_balance
             self.add_params_to_present_trade()
+            # Get current timestamp and set it as the trade_id
+            self.present_working_trade.id = int(time.time() * 1000)
             self.trades.append(self.present_working_trade)
             # reduce the stake amount from current balance
             self.current_balance -= self.present_working_trade.stake
@@ -180,7 +187,7 @@ class NaiveBot:
                 send_open_alert(self.present_working_trade)
 
             # Save trades to disk
-            self.update_trades_to_disk()
+            self.append_trades_to_csv(self.present_working_trade)
 
         # Close for profit or convert the trade to a loss and open a new one
         if self.present_working_trade is not None:
@@ -214,7 +221,7 @@ class NaiveBot:
                 if self.bot_mode == BotMode.DRY_RUN:
                     send_close_alert(self.trades[idx])
 
-                self.update_trades_to_disk()  # Save the trade to disk
+                self.update_closed_trade(self.trades[idx])
 
                 self.present_working_trade = None
                 open_period = 0
@@ -255,23 +262,32 @@ class NaiveBot:
                         if self.bot_mode == BotMode.DRY_RUN:
                             send_close_alert(self.trades[idx])
 
-                        self.update_trades_to_disk()  # Save the trade to disk
+                        self.update_closed_trade(self.trades[idx])  # Update the trade to .csv
                         break
 
-    def update_trades_to_disk(self):
+    def append_trades_to_csv(self, trade):
         """
         Save the trades to disk
         """
-        df = pd.DataFrame([trade.__dict__ for trade in self.trades])
+        df = pd.DataFrame([trade.__dict__])
         file_name = 'trades.csv'
-        # time_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        # if self.run_params.short:
-        #     file_name += '_short'
-        # if self.run_params.compound:
-        #     file_name += '_compound'
-        # file_name += '_' + time_stamp + '.csv'
+        # Instead of appending everytime, update the corresponding row whenever trade is closed
         with open(file_name, 'a', newline='\n') as f:
             df.to_csv(f, mode='a', header=f.tell() == 0, index=False)
+
+    def update_closed_trade(self, trade):
+        """
+        Update the closed trade in the trades list
+        :param trade:
+        :return:
+        """
+        df = pd.read_csv('trades.csv')
+        # d = {k: v for k, v in trade.__dict__.items() if
+        #      k in ['currency', 'interval', 'buy_time', 'buy_price', 'short', 'compound']}
+        # m = (df[list(d)] == pd.Series(d)).all(axis=1)
+        # df.update(pd.DataFrame(trade.__dict__, index=df.index[m]))
+        df.loc[df['id'] == trade.id, trade.__dict__.keys()] = trade.__dict__.values()
+        df.to_csv('trades.csv', index=False)
 
     def dry_run(self, currency, interval, params: BackTestParams):
         """

@@ -16,6 +16,7 @@ class Trade:
     """
 
     def __init__(self, buy_time, buy_price, stake, sell_time=None, sell_price=None, pl_abs=None):
+        self.id = None
         self.currency = None
         self.interval = None
         self.short = False
