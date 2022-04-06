@@ -89,9 +89,10 @@ class NaiveBot:
         self.current_stake = 100
         self.bot_mode = BotMode.BACK_TEST
 
-    def perform_backtest(self, currency, start_date, end_date, interval, params: BackTestParams):
+    def perform_backtest(self, currency, base, start_date, end_date, interval, params: BackTestParams):
         """
         Performs a backtest on the given price data and summarizes the results.
+        :param base:
         :param params:
         :param interval:
         :param end_date:
@@ -101,10 +102,17 @@ class NaiveBot:
         """
         # Try to do some basic validations here
         # Also, maybe cache the previously downloaded data
-        print("Downloading price data for {}/USDT for time period {} and {}...".format(currency, start_date, end_date))
-        self.price_data = get_historical_data(currency, start_date, end_date, interval)[
-            ['close_time', 'close']].to_numpy()
-        print("Downloading price data... Done")
+        file_path = '../data/' + currency + '_' + base + '_' + interval + '_' + start_date + '_' + end_date + '.csv'
+        if os.path.isfile(file_path):
+            print('Loading data from file')
+            self.price_data = pd.read_csv(file_path)[['close_time', 'close']].to_numpy()
+        else:
+            print("Downloading price data for {}/{} for time period {} and {}...".format(currency, base, start_date,
+                                                                                         end_date))
+            df = get_historical_data(currency, base, start_date, end_date, interval)
+            df.to_csv(file_path)
+            self.price_data = df[['close_time', 'close']].to_numpy()
+            print("Downloading price data... Done")
 
         self.run_params = params
         self.run_params.currency = currency
@@ -124,6 +132,7 @@ class NaiveBot:
         Summarizes the trades and prints the results
         :return:
         """
+        fee_perc = 0.25  # For both buy and sell combined
         if len(self.trades) == 0:
             print("Looks like no trades happened :(")
             return
@@ -139,7 +148,7 @@ class NaiveBot:
             if trade.trade_status != TradeStatus.CLOSED:
                 open_trades_amount += trade.stake
             else:
-                total_profit += trade.pl_abs
+                total_profit += trade.pl_abs - trade.stake * fee_perc / 100.0
         print("Sum of current invested amount: ", open_trades_amount)
         print('Total profit is {} for the {} days trading period'.format(total_profit, self.total_trading_period))
         print('Projected yearly ROI is',
