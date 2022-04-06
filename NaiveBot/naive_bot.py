@@ -242,7 +242,7 @@ class NaiveBot:
             max_open_period = self.run_params.selling_points[0][0]
             if open_period >= max_open_period:
                 self.trades[idx].trade_status = TradeStatus.OPEN_FOR_LOSS
-
+                self.update_closed_trade(self.trades[idx])
                 # Open a new trade
                 self.present_working_trade = None
 
@@ -290,7 +290,7 @@ class NaiveBot:
 
     def update_closed_trade(self, trade):
         """
-        Update the closed trade in the trades list
+        Update the closed trade or opened for loss trade in the trades list
         :param trade:
         :return:
         """
@@ -330,6 +330,8 @@ class NaiveBot:
             trades_list.append(trade)
             if trade.trade_status == TradeStatus.OPEN_FOR_PROFIT:
                 self.present_working_trade = trade
+                self.current_balance = self.present_working_trade.opening_balance - self.present_working_trade.stake
+                self.current_stake = self.present_working_trade.stake
 
         self.trades = trades_list
 
@@ -354,6 +356,9 @@ class NaiveBot:
             print('\nPresent working trade:-')
             pp = pprint.PrettyPrinter(depth=4)
             pp.pprint(self.present_working_trade.__dict__)
+            print('\n')
+            print('Current balance:- ', self.current_balance)
+            print('Current stake:-', self.current_stake)
             print('\n')
         socket_client = BinanceSocket(currency, interval, self)
         socket_client.start_listening()
