@@ -1,7 +1,7 @@
-import enum
+from enum import IntEnum
 
 
-class TradeStatus(enum.Enum):
+class TradeStatus(IntEnum):
     """
     Enum for the trade status
     """

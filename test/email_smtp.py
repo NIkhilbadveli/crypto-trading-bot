@@ -84,3 +84,33 @@ def send_open_alert(trade: Trade):
         print("Some error happened while sending!")
         raise e
     server.quit()
+
+
+def send_socket_disconnect():
+    """
+    This function sends an email to the receiver_email
+    """
+    return  # Temporarily disabled
+    message = MIMEMultipart()
+    today = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+    message['Subject'] = "Socket disconnected! - " + today
+    message['From'] = gmail_user
+    message['To'] = receiver_email
+
+    msg = "Check the logs: \n"
+
+    sent_body = (msg + "\n\n" +
+                 "\t\tYour loving bot \u2764 \u2764 \u2764 \u2764\n")
+    message.attach(MIMEText(sent_body, "html"))
+    msg_body = message.as_string()
+
+    server = SMTP('smtp.gmail.com', 587)
+    server.starttls()
+    server.login(message['From'], gmail_app_password)
+    try:
+        server.sendmail(message['From'], message['To'], msg_body)
+        print('Email sent - ' + today)
+    except Exception as e:
+        print("Some error happened while sending!")
+        raise e
+    server.quit()

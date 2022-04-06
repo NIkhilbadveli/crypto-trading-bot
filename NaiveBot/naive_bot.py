@@ -1,11 +1,11 @@
 import json
-import enum
+from enum import IntEnum
+
+import pprint
 import pandas as pd
-import numpy as np
 from datetime import datetime
-import time
-import matplotlib.pyplot as plt
 import websocket
+import os
 
 from trade_class import Trade, TradeStatus
 from get_data import get_historical_data
@@ -48,7 +48,7 @@ class BinanceSocket:
             print(e)
 
 
-class BotMode(enum.Enum):
+class BotMode(IntEnum):
     """
     Enum for the bot mode
     """
@@ -158,6 +158,19 @@ class NaiveBot:
         self.present_working_trade.compound = self.run_params.compound
         self.present_working_trade.short = self.run_params.short
 
+    def get_new_trade_id(self):
+        """
+        Returns a new trade id
+        """
+        return None
+        # if not os.path.exists('trades.csv'):
+        #     return 1
+        # df = pd.read_csv('trades.csv')
+        # if len(df) == 0:
+        #     return 1
+        # else:
+        #     return df['id'].max() + 1
+
     def do_the_magic(self, candle_info):
         """
         This is where all the magic happens.
@@ -173,8 +186,8 @@ class NaiveBot:
                                                stake=self.current_stake)
             self.present_working_trade.opening_balance = self.current_balance
             self.add_params_to_present_trade()
-            # Get current timestamp and set it as the trade_id
-            self.present_working_trade.id = int(time.time() * 1000)
+            # Get uuid and set it as the trade_id
+            # self.present_working_trade.id = self.get_new_trade_id()
             self.trades.append(self.present_working_trade)
             # reduce the stake amount from current balance
             self.current_balance -= self.present_working_trade.stake
@@ -282,12 +295,43 @@ class NaiveBot:
         :return:
         """
         df = pd.read_csv('trades.csv')
-        # d = {k: v for k, v in trade.__dict__.items() if
-        #      k in ['currency', 'interval', 'buy_time', 'buy_price', 'short', 'compound']}
-        # m = (df[list(d)] == pd.Series(d)).all(axis=1)
-        # df.update(pd.DataFrame(trade.__dict__, index=df.index[m]))
-        df.loc[df['id'] == trade.id, trade.__dict__.keys()] = trade.__dict__.values()
+        d = {k: v for k, v in trade.__dict__.items() if
+             k in ['currency', 'interval', 'buy_time', 'buy_price', 'short', 'compound']}
+        m = (df[list(d)] == pd.Series(d)).all(axis=1)
+        df.update(pd.DataFrame(trade.__dict__, index=df.index[m]))
+        # df.loc[df['id'] == trade.id, trade.__dict__.keys()] = trade.__dict__.values()
         df.to_csv('trades.csv', index=False)
+
+    def update_trades_list(self):
+        """
+        Update the trades list
+        """
+        if not os.path.exists('trades.csv'):
+            return
+        df = pd.read_csv('trades.csv')
+        trades_list = []
+        for _, row in df.iterrows():
+            if row['currency'] != self.run_params.currency or row['interval'] != self.run_params.interval \
+                    or row['short'] != self.run_params.short or row['compound'] != self.run_params.compound:
+                continue
+            trade = Trade(buy_time=row['buy_time'], buy_price=row['buy_price'], stake=row['stake'])
+            trade.id = row['id']
+            trade.currency = row['currency']
+            trade.interval = row['interval']
+            trade.short = row['short']
+            trade.compound = row['compound']
+            trade.sell_time = row['sell_time']
+            trade.sell_price = row['sell_price']
+            trade.pl_abs = row['pl_abs']
+            trade.trade_status = row['trade_status']
+            trade.opening_balance = row['opening_balance']
+            trade.closing_balance = row['closing_balance']
+
+            trades_list.append(trade)
+            if trade.trade_status == TradeStatus.OPEN_FOR_PROFIT:
+                self.present_working_trade = trade
+
+        self.trades = trades_list
 
     def dry_run(self, currency, interval, params: BackTestParams):
         """
@@ -301,5 +345,15 @@ class NaiveBot:
         self.bot_mode = BotMode.DRY_RUN
         self.current_balance = params.starting_balance
         self.current_stake = params.starting_stake
+        self.update_trades_list()
+
+        df = pd.DataFrame([trade.__dict__ for trade in self.trades])
+        print('Existing trades from the csv file:-')
+        print(df.tail())
+        if self.present_working_trade:
+            print('\nPresent working trade:-')
+            pp = pprint.PrettyPrinter(depth=4)
+            pp.pprint(self.present_working_trade.__dict__)
+            print('\n')
         socket_client = BinanceSocket(currency, interval, self)
         socket_client.start_listening()
