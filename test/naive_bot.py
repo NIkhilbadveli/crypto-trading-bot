@@ -9,7 +9,7 @@ import os
 
 from trade_class import Trade, TradeStatus
 from get_data import get_historical_data
-from email_smtp import send_open_alert, send_close_alert, send_socket_disconnect
+from telegram_alerts import send_open_alert, send_close_alert, send_socket_disconnect
 
 
 class BinanceSocket:
@@ -132,7 +132,7 @@ class NaiveBot:
         Summarizes the trades and prints the results
         :return:
         """
-        fee_perc = 0.25  # For both buy and sell combined
+
         if len(self.trades) == 0:
             print("Looks like no trades happened :(")
             return
@@ -148,7 +148,7 @@ class NaiveBot:
             if trade.trade_status != TradeStatus.CLOSED:
                 open_trades_amount += trade.stake
             else:
-                total_profit += trade.pl_abs - trade.stake * fee_perc / 100.0
+                total_profit += trade.pl_abs
         print("Sum of current invested amount: ", open_trades_amount)
         print('Total profit is {} for the {} days trading period'.format(total_profit, self.total_trading_period))
         print('Projected yearly ROI is',
@@ -186,6 +186,7 @@ class NaiveBot:
         :param candle_info:
         :return:
         """
+        fee_perc = 0.25  # For both buy and sell combined
         current_time = candle_info[0]
         current_price = candle_info[1]
 
@@ -225,7 +226,7 @@ class NaiveBot:
             # Profit loop
             if pl_perc >= self.run_params.take_profit_percentage:
                 # add the profit amount to stake amount
-                pl_abs = self.present_working_trade.stake * pl_perc / 100
+                pl_abs = self.present_working_trade.stake * (pl_perc - fee_perc) / 100
                 self.current_balance += (self.current_stake + pl_abs)
                 if self.run_params.compound:
                     self.current_stake += pl_abs / 2  # This is like re-investing profits
@@ -266,7 +267,7 @@ class NaiveBot:
 
                 for period, stop_loss_percentage in self.run_params.selling_points:
                     if open_period >= period and 0 <= -pl_perc <= stop_loss_percentage:
-                        pl_abs = trade.stake * pl_perc / 100
+                        pl_abs = trade.stake * (pl_perc - fee_perc) / 100
                         self.current_balance += (trade.stake + pl_abs)
                         # self.current_stake = self.dry_run_params.starting_stake
                         # Update the trade status

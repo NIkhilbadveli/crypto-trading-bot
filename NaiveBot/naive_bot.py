@@ -9,7 +9,7 @@ import os
 
 from trade_class import Trade, TradeStatus
 from get_data import get_historical_data
-from email_smtp import send_open_alert, send_close_alert, send_socket_disconnect
+from telegram_alerts import send_open_alert, send_close_alert, send_socket_disconnect
 
 
 class BinanceSocket:
@@ -89,9 +89,10 @@ class NaiveBot:
         self.current_stake = 100
         self.bot_mode = BotMode.BACK_TEST
 
-    def perform_backtest(self, currency, start_date, end_date, interval, params: BackTestParams):
+    def perform_backtest(self, currency, base, start_date, end_date, interval, params: BackTestParams):
         """
         Performs a backtest on the given price data and summarizes the results.
+        :param base:
         :param params:
         :param interval:
         :param end_date:
@@ -101,10 +102,17 @@ class NaiveBot:
         """
         # Try to do some basic validations here
         # Also, maybe cache the previously downloaded data
-        print("Downloading price data for {}/USDT for time period {} and {}...".format(currency, start_date, end_date))
-        self.price_data = get_historical_data(currency, start_date, end_date, interval)[
-            ['close_time', 'close']].to_numpy()
-        print("Downloading price data... Done")
+        file_path = '../data/' + currency + '_' + base + '_' + interval + '_' + start_date + '_' + end_date + '.csv'
+        if os.path.isfile(file_path):
+            print('Loading data from file')
+            self.price_data = pd.read_csv(file_path)[['close_time', 'close']].to_numpy()
+        else:
+            print("Downloading price data for {}/{} for time period {} and {}...".format(currency, base, start_date,
+                                                                                         end_date))
+            df = get_historical_data(currency, base, start_date, end_date, interval)
+            df.to_csv(file_path)
+            self.price_data = df[['close_time', 'close']].to_numpy()
+            print("Downloading price data... Done")
 
         self.run_params = params
         self.run_params.currency = currency
@@ -124,6 +132,7 @@ class NaiveBot:
         Summarizes the trades and prints the results
         :return:
         """
+
         if len(self.trades) == 0:
             print("Looks like no trades happened :(")
             return
@@ -177,6 +186,7 @@ class NaiveBot:
         :param candle_info:
         :return:
         """
+        fee_perc = 0.25  # For both buy and sell combined
         current_time = candle_info[0]
         current_price = candle_info[1]
 
@@ -216,7 +226,7 @@ class NaiveBot:
             # Profit loop
             if pl_perc >= self.run_params.take_profit_percentage:
                 # add the profit amount to stake amount
-                pl_abs = self.present_working_trade.stake * pl_perc / 100
+                pl_abs = self.present_working_trade.stake * (pl_perc - fee_perc) / 100
                 self.current_balance += (self.current_stake + pl_abs)
                 if self.run_params.compound:
                     self.current_stake += pl_abs / 2  # This is like re-investing profits
@@ -257,7 +267,7 @@ class NaiveBot:
 
                 for period, stop_loss_percentage in self.run_params.selling_points:
                     if open_period >= period and 0 <= -pl_perc <= stop_loss_percentage:
-                        pl_abs = trade.stake * pl_perc / 100
+                        pl_abs = trade.stake * (pl_perc - fee_perc) / 100
                         self.current_balance += (trade.stake + pl_abs)
                         # self.current_stake = self.dry_run_params.starting_stake
                         # Update the trade status
