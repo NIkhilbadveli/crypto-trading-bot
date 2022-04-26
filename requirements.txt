@@ -9,3 +9,4 @@ scikit-learn
 sktime
 websocket-client
 python-telegram-bot
+ta

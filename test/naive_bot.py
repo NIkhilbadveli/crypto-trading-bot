@@ -1,15 +1,24 @@
 import json
+import pickle
 from enum import IntEnum
 
 import pprint
+
+import keras.models
 import pandas as pd
 from datetime import datetime
 import websocket
 import os
 
+from sklearn.preprocessing import MinMaxScaler
+
 from trade_class import Trade, TradeStatus
 from get_data import get_historical_data
 from telegram_alerts import send_open_alert, send_close_alert, send_socket_disconnect
+
+from ta.momentum import RSIIndicator, AwesomeOscillatorIndicator
+from ta.trend import MACD, ADXIndicator
+from ta.volatility import BollingerBands
 
 
 class BinanceSocket:
@@ -56,6 +65,118 @@ class BotMode(IntEnum):
     BACK_TEST = 2
 
 
+class ForecastModel:
+    """
+    Class for the forecasting model
+    """
+
+    def __init__(self, data_file, model_file, model_scaler_file):
+        self.interval = '1hr'
+        self.data = pd.read_csv(data_file)
+        self.scaler = pickle.load(open(model_scaler_file, 'rb'))
+        self.model = keras.models.load_model(model_file)
+        self.df = None
+        self.price_array = None
+        self.prepare_input()
+
+    def add_technical_indicators(self, df):
+        """
+        Add MACD, ADX, RSI, AO, BB to the dataframe
+        :return:
+        """
+        # Create MACD using ta library
+        df['macd'] = MACD(close=df['close'], window_slow=26, window_fast=12, window_sign=9).macd()
+
+        # Create ADX using ta library
+        df['adx'] = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14).adx()
+
+        # Create upper and lower bollinger bands using ta library
+        indicator_bb = BollingerBands(close=df['close'], window=20, window_dev=2)
+        df['upper_bb'] = indicator_bb.bollinger_hband()
+        df['lower_bb'] = indicator_bb.bollinger_lband()
+        df['bb_perc'] = indicator_bb.bollinger_pband()  # Percentage band
+
+        # Create RSI using ta library
+        df['rsi'] = RSIIndicator(close=df['close'], window=14).rsi()
+
+        # Create Awesome Osciallator using ta library
+        df['ao'] = AwesomeOscillatorIndicator(high=df['high'], low=df['low'], window1=5,
+                                              window2=34).awesome_oscillator()
+        return df
+
+    def inverse_transform(self, y):
+        """
+        This function is used to inverse transform the predicted values to the original scale.
+        :param y:
+        :return:
+        """
+        y_scaler = MinMaxScaler(feature_range=(0, 1))
+        y_scaler.min_, y_scaler.scale_ = self.scaler.min_[0], self.scaler.scale_[0]
+        y = y.reshape(-1, 1)
+        y = y_scaler.inverse_transform(y)
+        return y
+
+    def prepare_input(self):
+        """
+        This function is used to prepare the input data for the model.
+        :return:
+        """
+        self.data.dropna(inplace=True)
+        self.data['date'] = pd.to_datetime(self.data['open_time'], unit='ms')
+        self.data.drop_duplicates(subset='date', keep='first', inplace=True)
+        df = self.data[['date', 'close', 'high', 'low']]
+        df.set_index('date', inplace=True)
+
+        # Add technical indicators
+        df = self.add_technical_indicators(df)
+
+        df = df.dropna()
+        df.drop(labels=['high', 'low'], inplace=True, axis=1)
+        self.df = df
+
+        self.price_array = df.to_numpy()
+        self.price_array = self.scaler.transform(self.price_array)
+        self.price_array = self.price_array[:, 1:]
+
+    def predict_short(self, x_timestamp, x_price):
+        """
+        This function will predict if we should take a short position.
+        :param x_timestamp:
+        :param x_price:
+        :return:
+        """
+        p, q = 48, 24
+        # Find the index of the closest past timestamp
+        index = -1
+        date_values = self.df.index.values
+        x_timestamp = int(x_timestamp)
+        for i in range(len(self.df.index.values)):
+            cur_timestamp = int(str(pd.Timestamp(date_values[i]).value)[:13])
+            # assert len(str(cur_timestamp)) == len(str(x_timestamp))
+            if cur_timestamp >= x_timestamp:
+                index = i - 1
+
+        if index < p:
+            return False  # Going long position
+
+        # Get the past data
+        past_data = self.price_array[index - p:index, :]
+        past_data = past_data.reshape(1, p, past_data.shape[1])
+        y_pred = self.model.predict(past_data)
+        y_pred = self.inverse_transform(y_pred)
+
+        print(y_pred)
+
+        # If at least one of the predicted values is greater than the current price by 1%, then we should go long
+        for i in range(len(y_pred)):
+            diff = (y_pred[i] - x_price) * 100 / x_price
+            if diff >= 1:
+                return False
+            elif diff <= -1:
+                return True
+        return False
+
+
 class NaiveBot:
     """
     A basic bot which implements gradual selling and with a preset maximum of open trades implicitly determined by the
@@ -88,6 +209,8 @@ class NaiveBot:
         self.current_balance = self.starting_balance
         self.current_stake = 100
         self.bot_mode = BotMode.BACK_TEST
+        self.forecast_model = ForecastModel(data_file='btc_data_1hr.csv', model_file='model.h5',
+                                            model_scaler_file='scaler.pkl')
 
     def perform_backtest(self, currency, base, start_date, end_date, interval, params: BackTestParams):
         """
@@ -205,6 +328,9 @@ class NaiveBot:
             # Print the trade details
             print("\n")
             print("New trade opened at {} at the buy price of {}".format(current_time, current_price))
+
+            # if self.bot_mode == BotMode.BACK_TEST:
+            #     self.run_params.short = self.forecast_model.predict_short(current_time, current_price)
 
             if self.bot_mode == BotMode.DRY_RUN:
                 send_open_alert(self.present_working_trade)

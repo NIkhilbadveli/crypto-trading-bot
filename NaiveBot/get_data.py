@@ -22,16 +22,18 @@ client = Client(api_key, api_secret)
 ]'''
 
 
-def get_historical_data(cur, start_date, end_date, frequency):
+def get_historical_data(cur, base, start_date, end_date, frequency):
     """
     Get historical data from Binance
+    :param base:
     :param cur:
     :param start_date:
     :param end_date:
     :param frequency:
     :return:
     """
-    klines = client.get_historical_klines(cur + "USDT", frequency, start_date, end_date)
+    # klines = client.get_historical_klines(cur + "USDT", frequency, start_date, end_date)
+    klines = client.get_historical_klines(cur + base, frequency, start_date, end_date, limit=1000)
     df = pd.DataFrame(klines,
                       columns=['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'c1', 'c2', 'c3',
                                'c4',
@@ -41,5 +43,5 @@ def get_historical_data(cur, start_date, end_date, frequency):
     return df
 
 
-# data_df = get_historical_data('DOGE', '2022-03-01', '2022-03-25', Client.KLINE_INTERVAL_1MINUTE)
-# data_df.to_csv('doge_data_1_min.csv')
+# data_df = get_historical_data('BTC', 'USDT', '2021-01-01', '2021-12-31', Client.KLINE_INTERVAL_1HOUR)
+# data_df.to_csv('btc_data_1hr.csv')
