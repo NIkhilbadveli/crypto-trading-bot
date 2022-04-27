@@ -43,5 +43,5 @@ def get_historical_data(cur, base, start_date, end_date, frequency):
     return df
 
 
-# data_df = get_historical_data('BTC', 'USDT', '2021-01-01', '2021-12-31', Client.KLINE_INTERVAL_1HOUR)
-# data_df.to_csv('btc_data_1hr.csv')
+# data_df = get_historical_data('ETH', 'USDT', '2021-04-01', '2022-04-26', Client.KLINE_INTERVAL_1HOUR)
+# data_df.to_csv('eth_data_1hr.csv')

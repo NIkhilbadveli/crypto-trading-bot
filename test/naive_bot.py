@@ -155,6 +155,7 @@ class ForecastModel:
             # assert len(str(cur_timestamp)) == len(str(x_timestamp))
             if cur_timestamp >= x_timestamp:
                 index = i - 1
+                break
 
         if index < p:
             return False  # Going long position
@@ -165,7 +166,7 @@ class ForecastModel:
         y_pred = self.model.predict(past_data)
         y_pred = self.inverse_transform(y_pred)
 
-        print(y_pred)
+        # print(y_pred)
 
         # If at least one of the predicted values is greater than the current price by 1%, then we should go long
         for i in range(len(y_pred)):
@@ -209,8 +210,8 @@ class NaiveBot:
         self.current_balance = self.starting_balance
         self.current_stake = 100
         self.bot_mode = BotMode.BACK_TEST
-        self.forecast_model = ForecastModel(data_file='btc_data_1hr.csv', model_file='model.h5',
-                                            model_scaler_file='scaler.pkl')
+        self.forecast_model = ForecastModel(data_file='eth_data_1hr.csv', model_file='eth_model.h5',
+                                            model_scaler_file='eth_scaler.pkl')
 
     def perform_backtest(self, currency, base, start_date, end_date, interval, params: BackTestParams):
         """
