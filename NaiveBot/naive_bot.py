@@ -1,15 +1,21 @@
 import json
+
 from enum import IntEnum
 
 import pprint
+
 import pandas as pd
+
 from datetime import datetime
 import websocket
 import os
+import warnings
+from pandas.core.common import SettingWithCopyWarning
 
 from trade_class import Trade, TradeStatus
 from get_data import get_historical_data
 from telegram_alerts import send_open_alert, send_close_alert, send_socket_disconnect
+from forecast_model import ForecastModel
 
 
 class BinanceSocket:
@@ -17,10 +23,10 @@ class BinanceSocket:
     WSS socket which streams binance kline data in real-time.
     """
 
-    def __init__(self, currency, interval, bot):
+    def __init__(self, currency, base, interval, bot):
         self.bot = bot
         # See if we can change the update frequency
-        self.socket_url = "wss://stream.binance.com:9443/ws/" + (currency + 'USDT').lower() + "@kline_" + interval
+        self.socket_url = "wss://stream.binance.com:9443/ws/" + (currency + base).lower() + "@kline_" + interval
         print('Socket URL :', self.socket_url)
         self.ws = websocket.WebSocketApp(self.socket_url, on_open=lambda ws: self.on_open(ws),
                                          on_close=lambda ws: self.on_close(ws),
@@ -68,7 +74,7 @@ class NaiveBot:
         """
 
         def __init__(self, take_profit_percentage, short, selling_points, starting_balance=500, starting_stake=100,
-                     compound=False):
+                     compound=False, enable_forecast=False):
             self.starting_balance = starting_balance
             self.starting_stake = starting_stake
             self.take_profit_percentage = take_profit_percentage
@@ -77,6 +83,7 @@ class NaiveBot:
             self.compound = compound
             self.currency = None
             self.interval = None
+            self.enable_forecast = enable_forecast
 
     def __init__(self):
         self.price_data = None
@@ -88,6 +95,10 @@ class NaiveBot:
         self.current_balance = self.starting_balance
         self.current_stake = 100
         self.bot_mode = BotMode.BACK_TEST
+        # Ignore warnings
+        warnings.simplefilter(action="ignore", category=SettingWithCopyWarning)
+        warnings.simplefilter(action="ignore", category=RuntimeWarning)
+        self.forecast_model = ForecastModel(currency='ETH', base='USDT')
 
     def perform_backtest(self, currency, base, start_date, end_date, interval, params: BackTestParams):
         """
@@ -205,6 +216,9 @@ class NaiveBot:
             # Print the trade details
             print("\n")
             print("New trade opened at {} at the buy price of {}".format(current_time, current_price))
+
+            if self.run_params.enable_forecast:
+                self.run_params.short = self.forecast_model.predict_short(current_time, current_price)
 
             if self.bot_mode == BotMode.DRY_RUN:
                 send_open_alert(self.present_working_trade)
@@ -345,7 +359,7 @@ class NaiveBot:
 
         self.trades = trades_list
 
-    def dry_run(self, currency, interval, params: BackTestParams):
+    def dry_run(self, currency, base, interval, params: BackTestParams):
         """
         Creates a simulated live-run with demo account. This will also try to email the trades that happen as we go.
         Uses binance socket to listen for the price updates.
@@ -370,5 +384,5 @@ class NaiveBot:
             print('Current balance:- ', self.current_balance)
             print('Current stake:-', self.current_stake)
             print('\n')
-        socket_client = BinanceSocket(currency, interval, self)
+        socket_client = BinanceSocket(currency, base, interval, self)
         socket_client.start_listening()

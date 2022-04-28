@@ -1,3 +1,4 @@
+from datetime import datetime
 from binance.client import Client
 import pandas as pd
 
@@ -43,5 +44,26 @@ def get_historical_data(cur, base, start_date, end_date, frequency):
     return df
 
 
-# data_df = get_historical_data('DOGE', '2022-03-01', '2022-03-25', Client.KLINE_INTERVAL_1MINUTE)
-# data_df.to_csv('doge_data_1_min.csv')
+def get_hourly_data(cur, base, start_timestamp, end_timestamp):
+    """
+    Get data in hourly intervals from Binance starting from a given timestamp
+    :param end_timestamp:
+    :param cur:
+    :param base:
+    :param start_timestamp:
+    :return:
+    """
+    # print('Getting hourly data from Binance...')
+    klines = client.get_historical_klines(cur + base, Client.KLINE_INTERVAL_1HOUR, start_str=start_timestamp,
+                                          end_str=str(end_timestamp), limit=1000)
+    df = pd.DataFrame(klines,
+                      columns=['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'c1', 'c2', 'c3',
+                               'c4',
+                               'c5'])
+    df.loc[:, ~df.columns.isin(['open_time', 'close_time', 'c2'])] = \
+        df.loc[:, ~df.columns.isin(['open_time', 'close_time', 'c2'])].astype(float)
+    return df
+
+
+# data_df = get_hourly_data('ETH', 'USDT', 1650997348284, datetime.now().timestamp())
+# data_df.to_csv('eth_data_1hr.csv')

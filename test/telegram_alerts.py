@@ -16,7 +16,7 @@ def send_close_alert(trade: Trade):
     :param trade:
     """
     today = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-    msg = '<b>Trade closed</b> - ' + today + '\n\n'
+    msg = '**Trade closed** - ' + today + '\n\n'
     msg += "Here are the details of the trade:- \n"
     msg += "Trade Buy time: " + str(trade.buy_time) + "\n"
     msg += "Trade Sell time: " + str(trade.sell_time) + "\n"
@@ -42,7 +42,7 @@ def send_open_alert(trade: Trade):
     """
 
     today = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-    msg = '<b>Trade opened</b> - ' + today + '\n\n'
+    msg = '**Trade opened** - ' + today + '\n\n'
     msg += "Here are the details of the trade:- \n"
     msg += "Trade Buy time: " + str(trade.buy_time) + "\n"
     msg += "Trade Buy price: " + str(trade.buy_price) + "\n"
@@ -50,6 +50,26 @@ def send_open_alert(trade: Trade):
 
     sent_body = (msg + "\n\n" +
                  "\t\tYour loving bot \u2764 \u2764 \u2764 \u2764\n")
+    try:
+        bot.send_message(user_id, sent_body)
+        print('Alert sent - ' + today)
+    except Exception as e:
+        print("Some error happened while sending!")
+        raise e
+
+
+def send_training_alert():
+    """
+    This function sends an email to the receiver_email
+    """
+
+    today = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+    msg = 'Model used for making forecast - ' + today + '\n'
+    msg += "Check the logs: \n"
+
+    sent_body = (msg + "\n\n" +
+                 "\t\tYour loving bot \u2764 \u2764 \u2764 \u2764\n")
+
     try:
         bot.send_message(user_id, sent_body)
         print('Alert sent - ' + today)

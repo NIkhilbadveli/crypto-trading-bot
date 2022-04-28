@@ -10,3 +10,4 @@ sktime
 websocket-client
 python-telegram-bot
 ta
+apscheduler
