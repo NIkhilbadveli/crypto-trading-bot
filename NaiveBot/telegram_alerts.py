@@ -16,7 +16,7 @@ def send_close_alert(trade: Trade):
     :param trade:
     """
     today = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-    msg = '**Trade closed** - ' + today + '\n\n'
+    msg = '*Forecast*Trade closed** - ' + today + '\n\n'
     msg += "Here are the details of the trade:- \n"
     msg += "Trade Buy time: " + str(trade.buy_time) + "\n"
     msg += "Trade Sell time: " + str(trade.sell_time) + "\n"
@@ -42,7 +42,7 @@ def send_open_alert(trade: Trade):
     """
 
     today = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-    msg = '**Trade opened** - ' + today + '\n\n'
+    msg = '*Forecast*Trade opened* - ' + today + '\n\n'
     msg += "Here are the details of the trade:- \n"
     msg += "Trade Buy time: " + str(trade.buy_time) + "\n"
     msg += "Trade Buy price: " + str(trade.buy_price) + "\n"

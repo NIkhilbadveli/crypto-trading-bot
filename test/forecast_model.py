@@ -92,10 +92,11 @@ class ForecastModel:
         dropout = 0.2
 
         # Find the timestamp in ms for 1 year back
-        one_year_back = int(datetime.now().timestamp() * 1000) - (365 * 24 * 60 * 60 * 1000)
+        cur_timestamp = datetime.now().timestamp() * 1000
+        one_year_back = int(cur_timestamp) - (365 * 24 * 60 * 60 * 1000)
         # Get hourly data
         print('Getting hourly data starting one year back...')
-        data = get_hourly_data(self.currency, self.base, one_year_back)
+        data = get_hourly_data(self.currency, self.base, start_timestamp=one_year_back, end_timestamp=cur_timestamp)
         data.to_csv(self.data_file)  # Saving for later reference
         print('Got hourly data')
         print('Preparing data...')
@@ -114,7 +115,7 @@ class ForecastModel:
         print('Loss in the last epoch is:', history.history['loss'][-1])
         y_pred = model.predict(x_test)
         # Print mean absolute of percentage error
-        mape = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
+        mape = np.mean(np.abs((y_test.flatten() - y_pred.flatten()) / y_test.flatten())) * 100
         print('mean absolute of percentage error:', mape)
         # Save the model to disk
         model.save(self.model_file)

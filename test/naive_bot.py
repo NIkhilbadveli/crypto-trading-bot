@@ -98,7 +98,7 @@ class NaiveBot:
         # Ignore warnings
         warnings.simplefilter(action="ignore", category=SettingWithCopyWarning)
         warnings.simplefilter(action="ignore", category=RuntimeWarning)
-        self.forecast_model = ForecastModel(currency='ETH', base='USDT')
+        self.forecast_model = None
 
     def perform_backtest(self, currency, base, start_date, end_date, interval, params: BackTestParams):
         """
@@ -111,6 +111,8 @@ class NaiveBot:
         :param currency:
         :return: The trades, the time of the last trade and the price of the last trade.
         """
+        if self.forecast_model is None:
+            self.forecast_model = ForecastModel(currency, base)
         # Try to do some basic validations here
         # Also, maybe cache the previously downloaded data
         file_path = '../data/' + currency + '_' + base + '_' + interval + '_' + start_date + '_' + end_date + '.csv'
@@ -365,6 +367,8 @@ class NaiveBot:
         Uses binance socket to listen for the price updates.
         :return:
         """
+        if self.forecast_model is None:
+            self.forecast_model = ForecastModel(currency, base)
         self.run_params = params
         self.run_params.currency = currency
         self.run_params.interval = interval
