@@ -1,0 +1,33 @@
+# Big loss loop
+            # if -pl_perc >= max_loss * 2 and open_period < max_open_period:
+            #     print('The trade buy_time is:', self.present_working_trade.buy_time)
+            #     print('Open period: {}'.format(open_period))
+            #     print(
+            #         'Selling at loss {} because the loss is more than max loss {} at time {}'.format(pl_perc, max_loss,
+            #                                                                                          current_time))
+            #     self.big_loss_trades.append([open_period * 24, -pl_perc])
+            #     # Get the absolute profit
+            #     pl_abs = self.present_working_trade.stake * (pl_perc - fee_perc) / 100
+            #     # Close the trade at big loss
+            #     self.current_balance += (self.present_working_trade.stake + pl_abs)
+            #     # self.current_stake = self.dry_run_params.starting_stake
+            #     # Update the trade status
+            #     self.trades[idx].sell_time = current_time
+            #     self.trades[idx].sell_price = current_price
+            #     self.trades[idx].pl_abs = pl_abs
+            #     self.trades[idx].trade_status = TradeStatus.CLOSED
+            #     self.trades[idx].closing_balance = self.current_balance
+            #
+            #     # Print the trade details
+            #     if self.bot_mode == BotMode.DRY_RUN:
+            #         print("\n")
+            #         print(
+            #             "Past Trade at {} closed at {} with loss percentage {}".format(
+            #                 self.present_working_trade.buy_time,
+            #                 current_time,
+            #                 pl_perc))
+            #         send_close_alert(self.trades[idx])
+            #
+            #     self.update_closed_trade(self.trades[idx])  # Update the trade to .csv
+            #     self.present_working_trade = None
+            #     self.run_params.short = not self.run_params.short

@@ -49,19 +49,10 @@ class ForecastModel:
                 self.back_test_data.to_csv(file_path)
                 print("Downloading price data... Done")
 
-        if self.model is None:
+        if self.model is None and not self.back_test:
             # Schedule background training once a week
             # print('Training the model for the first time...')
-            if not self.back_test:
-                self.schedule_background_training()
-            else:
-                # Get start_date and end_date by subtracting 1 year from each
-                st_date = datetime.strptime(start_date, '%Y-%m-%d')
-                ed_date = datetime.strptime(end_date, '%Y-%m-%d')
-                st_date = (st_date - timedelta(days=180)).strftime('%Y-%m-%d')
-                # ed_date = (ed_date - timedelta(days=365)).strftime('%Y-%m-%d')
-                print('Training the model for the period {} to {}...'.format(st_date, start_date))
-                self.train_model(start_date=st_date, end_date=start_date)
+            self.schedule_background_training()
             # print('Training done! Model saved to: ' + self.model_file)
 
         self.scheduler = None
@@ -132,24 +123,24 @@ class ForecastModel:
         print('Data prepared')
         print('Splitting data...')
         # Split data into training and test sets using the above function
-        x_train, y_train, x_test, y_test = self.make_train_test_data(p, q, price_array, test_size=0.1, shuffle=False)
+        x_train, y_train, x_test, y_test = self.make_train_test_data(p, q, price_array, test_size=0.2, shuffle=False)
         print('Shapes of x_train, x_test, y_train, y_test:', x_train.shape, x_test.shape, y_train.shape, y_test.shape)
         print('Splitting data done')
         print('Training model...')
         model = self.get_model(p, q, dropout, x_train)
         # Train model
-        history = model.fit(x_train, y_train, epochs=num_epochs, batch_size=mini_batch_size, shuffle=True,
-                            verbose=verbose)
+        history = model.fit(x_train, y_train, epochs=num_epochs, batch_size=mini_batch_size, validation_split=0.1,
+                            shuffle=True, verbose=verbose)
         print('Loss in the last epoch is:', history.history['loss'][-1])
         y_pred = model.predict(x_test)
         # Print mean absolute of percentage error
-        # y_test = np.delete(y_test, np.where(y_test == 0), axis=0)
-        # mape = np.mean(np.abs((y_test.flatten() - y_pred.flatten()) / y_test.flatten())) * 100
-        # print('mean absolute of percentage error:', mape)
+        y_test = np.delete(y_test, np.where(y_test == 0), axis=0)
+        mape = np.mean(np.abs((y_test.flatten() - y_pred.flatten()) / y_test.flatten())) * 100
+        print('mean absolute of percentage error:', mape)
 
         # Rename the model_file if model retrain is enabled
-        # if self.model_retrain:
-        #     self.model_file = self.model_file.replace('.h5', start_date + '_' + end_date + '.h5')
+        if self.model_retrain:
+            self.model_file = self.model_file.replace('.h5', start_date + '_' + end_date + '.h5')
 
         # Save the model to disk
         model.save(self.model_file)
@@ -209,17 +200,14 @@ class ForecastModel:
                                               window2=34).awesome_oscillator()
         return df
 
-    def inverse_transform(self, y):
+    def inverse_transform(self, y, mini, maxi):
         """
         This function is used to inverse transform the predicted values to the original scale.
-        :param y:
+        :param y: predicted values for a single time series sample
         :return:
         """
-        y_scaler = MinMaxScaler(feature_range=(0, 1))
-        y_scaler.min_, y_scaler.scale_ = self.scaler.min_[0], self.scaler.scale_[0]
-        y = y.reshape(-1, 1)
-        y = y_scaler.inverse_transform(y)
-        return y
+        print(mini, maxi)
+        return y * (maxi - mini) + mini
 
     def make_train_test_data(self, p, q, p_arr, test_size=0.2, shuffle=True):
         """
@@ -231,7 +219,7 @@ class ForecastModel:
         """
         # Make sequences of 100 previous values and take the next value as the target
         time_offset = p + q
-        step = 1
+        step = 1 if shuffle else p
         d = []
         for index in range(0, len(p_arr) - time_offset, step):
             d.append(p_arr[index: index + time_offset, :])
@@ -279,16 +267,16 @@ class ForecastModel:
         :return:
         """
         if self.df is None:
-            data = self.back_test_data  # This could be None
+            data = self.back_test_data  # This might be None
             data.dropna(inplace=True)
             data['date'] = pd.to_datetime(data['open_time'], unit='ms')
             data.drop_duplicates(subset='date', keep='first', inplace=True)
-            df = data[['date', 'close', 'high', 'low']]
+            df = data[['date', 'close', 'high', 'low', 'open']]
             df.set_index('date', inplace=True)
             # Add technical indicators
             df = self.add_technical_indicators(df)
             df = df.dropna()
-            df.drop(labels=['high', 'low'], inplace=True, axis=1)
+            # df.drop(labels=['high', 'low'], inplace=True, axis=1)
             self.df = df
 
         # Find the index of the closest past timestamp
@@ -301,7 +289,7 @@ class ForecastModel:
             if cur_timestamp >= x_timestamp:
                 index = i - 1
                 break
-        price_array = self.df.to_numpy()
+        price_array = self.df.to_numpy()  # This can be changed to some other place
         # Preprocess data using MinMaxScaler
         scaler = self.scaler if self.scaler else MinMaxScaler(feature_range=(0, 1))
         price_array = scaler.fit_transform(price_array)
@@ -328,50 +316,69 @@ class ForecastModel:
         :return:
         """
         # Return randomly between True and False
-        return random.choice([True, False])
-        p, q = 48, 24
+        # return random.choice([True, False])
+        p, q = 5, 1
+        n_features = 10
         if not self.model:
-            # print('Model predicted - Long position! Because we have no model!')
+            print('Model predicted - Long position! Because we have no model!')
             return False
 
         # x_dt = datetime.fromtimestamp(x_timestamp / 1000)
-        # timestamp_48hrs_back = int((x_dt - timedelta(hours=48 + 33)).timestamp() * 1000)
+        # timestamp_48hrs_back = int((x_dt - timedelta(
+        #     hours=p + 33)).timestamp() * 1000)  # 33 is the no. of nulls added after technical indicator calculations
         #
         # data = get_hourly_data(self.currency, self.base, start_timestamp=timestamp_48hrs_back,
         #                        end_timestamp=x_timestamp)
         #
         # price_array, scaler = self.prepare_input(data, prediction_mode=True)
-        # past_data = price_array[:, 1:]
+        # past_data = price_array[-p:, 1:]  # If data contains more than 48 hours, we will use the last 48 hours
 
         # Using the index method
         index, price_array = self.find_index(x_timestamp)
-        # print(index)
         if index < p:
             return False  # Going long position
         # Get the past data
-        past_data = price_array[index - p:index, 1:]
+        past_data = price_array[index - p:index, :]
         # print(past_data.shape)
 
-        if past_data.shape != (p, 7):  # If the data is not correct dimension, return
-            # print('Model predicted - Long position! Because the data is not correct dimension!')
+        if past_data.shape != (p, n_features):  # If the data is not correct dimension, return
+            print('Model predicted - Long position! Because the data is not correct dimension!')
             return False
 
         past_data = past_data.reshape(1, p, past_data.shape[1])
         y_pred = self.model.predict(past_data)
-        y_pred = self.inverse_transform(y_pred)
-
+        y_pred = self.inverse_transform(y_pred, 0, 1)
+        return not self.convert_to_signal(x_price, y_pred[0][0], y_pred[0][1], y_pred[0][2], y_pred[0][3])
         # Send telegram alert
         # send_training_alert()
         # print(y_pred)
 
+        # a = np.arange(1, 25)
+        # b = y_pred.flatten()
+        #
+        # theta = np.polyfit(a, b, 1)
+        # # print('theta:', theta)
+        #
+        # y_line = theta[1] + theta[0] * a
+        #
+        # # Print the difference b/w the first and the last value of y_line
+        # diff = (y_line[-1] - y_line[0]) * 100 / y_line[0]
+        # # print('Difference between first and last value of y_line:', diff)
+        # if abs(diff) < 5:
+        #     # print('Model predicted - Long position! Because there is less than 3% diff in line fit!')
+        #     return False, False
+        # else:
+        #     return True, True if diff > 0 else False
+
         # If at least one of the predicted values is greater than the current price by 1%, then we should go long
-        for i in range(len(y_pred)):
-            diff = (y_pred[i] - x_price) * 100 / x_price
-            if diff >= 1:
-                # print('Model predicted - Long position! Difference:', diff)
-                return False
-            elif diff <= -1:
-                # print('Model predicted - Short position! Difference:', diff)
-                return True
-        # print('Model predicted - Long position! Because there is less than 1% price movement!')
+        # for i in range(len(y_pred)):
+        #     diff = (y_pred[i] - x_price) * 100 / x_price
+        #     if diff >= 1:
+        #         print('Model predicted - Long position! Difference:', diff)
+        #         return False
+        #     elif diff <= -1:
+        #         print('Model predicted - Short position! Difference:', diff)
+        #         return True
+
+        print('Model predicted - Long position! Because there is less than 1% price movement!')
         return False

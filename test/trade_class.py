@@ -8,6 +8,7 @@ class TradeStatus(IntEnum):
     OPEN_FOR_PROFIT = 1
     OPEN_FOR_LOSS = 2
     CLOSED = 3
+    CLOSED_BY_MARGIN_CALL = 4
 
 
 class Trade:
@@ -30,3 +31,5 @@ class Trade:
         self.trade_status = TradeStatus.OPEN_FOR_PROFIT
         self.opening_balance = None
         self.closing_balance = None
+        self.leverage = None
+        self.margin_amount = None
