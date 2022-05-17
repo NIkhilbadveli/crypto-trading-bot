@@ -328,7 +328,7 @@ class ForecastModel:
         :return:
         """
         # Return randomly between True and False
-        return random.choice([True, False])
+        # return random.choice([True, False])
         p, q = 48, 24
         if not self.model:
             # print('Model predicted - Long position! Because we have no model!')
@@ -367,10 +367,10 @@ class ForecastModel:
         # If at least one of the predicted values is greater than the current price by 1%, then we should go long
         for i in range(len(y_pred)):
             diff = (y_pred[i] - x_price) * 100 / x_price
-            if diff >= 1:
+            if diff >= 0.2:
                 # print('Model predicted - Long position! Difference:', diff)
                 return False
-            elif diff <= -1:
+            elif diff <= -0.2:
                 # print('Model predicted - Short position! Difference:', diff)
                 return True
         # print('Model predicted - Long position! Because there is less than 1% price movement!')

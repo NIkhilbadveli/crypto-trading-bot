@@ -20,14 +20,16 @@ monthEnd = pd.date_range(year, periods=nMonths, freq='M').strftime("%Y-%m-%d")
 # currs = ['BTC', 'ETH']
 
 time_periods = [('2021-01-01', '2021-12-31')]
-currs = ['ETH']
+currs = ['XRP']
 
 for curr in currs:
     for sd, ed in time_periods:
         print('Testing for {} from {} to {}'.format(curr, sd, ed))
         bot1 = NaiveBot()
         params = bot1.BackTestParams(take_profit_percentage=0.2, short=False,
-                                     selling_points=[(1, 0.4), (3, 1.0)],
+                                     selling_points=[(1, 0.4 * 5), (3, 1.0 * 5)],
+                                     starting_balance=500,
+                                     stake_perc=0.1,
                                      compound=True,
                                      enable_forecast=True,
                                      leverage_enabled=True)
