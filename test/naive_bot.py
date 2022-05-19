@@ -167,7 +167,10 @@ class NaiveBot:
         print("Performing backtest... Done")
         print("\n")
         tp = self.summarize_trades()
-        self.month_wise_analysis(tp)
+        self.month_wise_analysis(tp[0])
+        tp.pop(0)
+        tp.insert(1, start_date)
+        return tp
 
     def month_wise_analysis(self, total_profit):
         """Generates a csv file of monthly returns"""
@@ -234,15 +237,20 @@ class NaiveBot:
         print("Current balance: ", self.current_balance)
 
         total_profit = 0
+        no_of_margin_calls = 0
         for trade in self.trades:
             if trade.trade_status == TradeStatus.CLOSED or trade.trade_status == TradeStatus.CLOSED_BY_MARGIN_CALL:
                 total_profit += trade.pl_abs
+
+            if trade.trade_status == TradeStatus.CLOSED_BY_MARGIN_CALL:
+                no_of_margin_calls += 1
 
         # print('Total profit is {} for the {} days trading period'.format(total_profit, self.total_trading_period))
         roi = (total_profit * 100 / self.starting_balance) * (365 / self.total_trading_period)
         print('Projected yearly ROI is', roi, '%')
         # print('Average profit per day is', total_profit / self.total_trading_period)
-        return total_profit
+        return [total_profit, self.run_params.currency, self.leverage, self.margin_factor, len(self.trades),
+                no_of_margin_calls, roi]
         # print('Average trade period is', trades[:, 5].sum() / len(trades))
         # print('Min trade period is', np.min(trades[:, 5]))
         # print('Max trade period is', np.max(trades[:, 5]))
@@ -413,7 +421,7 @@ class NaiveBot:
                 if trade.short:
                     pl_perc = -pl_perc
 
-                if pl_perc >= self.run_params.take_profit_percentage:
+                if pl_perc >= self.run_params.take_profit_percentage or open_period >= 1.6:
                     pl_abs = trade.stake * (pl_perc - self.fee_perc) / 100
                     pl_abs = self.leverage * pl_abs
                     self.current_balance += (trade.margin_amount + pl_abs)

@@ -113,7 +113,7 @@ class ForecastModel:
         num_epochs = 100  # These settings are used while training the model
         mini_batch_size = 32
         dropout = 0.2
-        verbose = 1 if self.back_test else 0
+        verbose = 0
 
         # Only if the start_date and end_date are empty, train the model for the last 1 year data
         if start_date == '' and end_date == '':
