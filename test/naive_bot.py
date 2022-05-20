@@ -77,21 +77,22 @@ class NaiveBot:
         Parameters for the back test
         """
 
-        def __init__(self, take_profit_percentage, short, selling_points, starting_balance=500, starting_stake=100,
+        def __init__(self, take_profit, short, max_days, starting_balance=500, starting_stake=100,
                      stake_perc=0.2, compound=False, enable_forecast=False, model_retrain=False,
-                     leverage_enabled=False):
+                     leverage_enabled=False, lev_mar=(1, 1)):
             self.starting_balance = starting_balance
             self.starting_stake = starting_stake
             self.stake_percentage = stake_perc
-            self.take_profit_percentage = take_profit_percentage
+            self.take_profit = take_profit
             self.short = short
-            self.selling_points = selling_points
+            self.max_days = max_days
             self.compound = compound
             self.currency = None
             self.interval = None
             self.enable_forecast = enable_forecast
             self.model_retrain = model_retrain
             self.leverage_enabled = leverage_enabled
+            self.lev_mar = lev_mar
 
     def __init__(self):
         self.starting_balance = 500  # Default values
@@ -112,7 +113,8 @@ class NaiveBot:
         self.skip_period = 60
         self.margin_factor = 1  # Amount of margin from the balance times the stake including the stake
         self.leverage = 1  # Amount of leverage to open the trade with
-        self.fee_perc = 0  # Percentage of the fee to be paid. Change the logic below so that fees are subtracted after profit with leverage
+        self.fee_perc = 0  # Percentage of the fee to be paid.
+        # Todo:- Change the logic below so that fees are subtracted after profit with leverage
         self.trades_file = 'trades.csv'
 
     def perform_backtest(self, currency, base, start_date, end_date, interval, params: BackTestParams):
@@ -128,7 +130,7 @@ class NaiveBot:
         """
         if self.forecast_model is None and params.enable_forecast:
             self.forecast_model = ForecastModel(currency, base, back_test=True, start_date=start_date,
-                                                end_date=end_date)
+                                                end_date=end_date, take_profit=params.take_profit)
 
         # Try to do some basic validations here
         # Also, maybe cache the previously downloaded data
@@ -153,8 +155,8 @@ class NaiveBot:
             self.price_data[0, 0] / 1000.0)).total_seconds() / 86400
 
         if self.run_params.leverage_enabled:
-            self.leverage = 5
-            self.margin_factor = 2
+            self.leverage = self.run_params.lev_mar[0]
+            self.margin_factor = self.run_params.lev_mar[1]
 
         # Delete the trades.csv if already exists
         if os.path.isfile(self.trades_file):
@@ -167,8 +169,7 @@ class NaiveBot:
         print("Performing backtest... Done")
         print("\n")
         tp = self.summarize_trades()
-        self.month_wise_analysis(tp[0])
-        tp.pop(0)
+        # self.month_wise_analysis(tp[0])
         tp.insert(1, start_date)
         return tp
 
@@ -238,22 +239,38 @@ class NaiveBot:
 
         total_profit = 0
         no_of_margin_calls = 0
+        short_count = 0
+        sum_profits = 0
+        sum_losses = 0
         for trade in self.trades:
             if trade.trade_status == TradeStatus.CLOSED or trade.trade_status == TradeStatus.CLOSED_BY_MARGIN_CALL:
                 total_profit += trade.pl_abs
+                if trade.pl_abs > 0:
+                    sum_profits += trade.pl_abs
+                else:
+                    sum_losses += trade.pl_abs
 
             if trade.trade_status == TradeStatus.CLOSED_BY_MARGIN_CALL:
                 no_of_margin_calls += 1
+
+            if trade.short:
+                short_count += 1
 
         # print('Total profit is {} for the {} days trading period'.format(total_profit, self.total_trading_period))
         roi = (total_profit * 100 / self.starting_balance) * (365 / self.total_trading_period)
         print('Projected yearly ROI is', roi, '%')
         # print('Average profit per day is', total_profit / self.total_trading_period)
-        return [total_profit, self.run_params.currency, self.leverage, self.margin_factor, len(self.trades),
-                no_of_margin_calls, roi]
-        # print('Average trade period is', trades[:, 5].sum() / len(trades))
-        # print('Min trade period is', np.min(trades[:, 5]))
-        # print('Max trade period is', np.max(trades[:, 5]))
+        out = [self.run_params.currency, self.leverage, self.margin_factor,
+               self.run_params.take_profit, self.run_params.max_days,
+               self.run_params.stake_percentage]  # Settings
+        num_trades = len(self.trades)
+        short_perc = short_count / num_trades * 100
+        out.extend([num_trades, num_trades / self.total_trading_period, short_perc])  # Trade stats
+        sum_losses = abs(sum_losses)
+        out.extend(
+            [int(total_profit), int(total_profit) / num_trades, round(sum_profits / sum_losses, 2), no_of_margin_calls,
+             roi])  # Profit stats
+        return out
 
     def add_params_to_present_trade(self):
         """
@@ -291,6 +308,16 @@ class NaiveBot:
         return (datetime.fromtimestamp(date1 / 1000.0) - datetime.fromtimestamp(
             date2 / 1000.0)).total_seconds() / 86400
 
+    def get_stake_amount(self):
+        """
+        Sample the stake amount from a normal distribution with min 10 and max 0.1% * B
+        :return:
+        """
+        S = self.current_balance * self.run_params.stake_percentage
+        mu = (10 + S) // 2
+        sigma = (S - mu) / 3  # 3 Standard deviations will cover 99.7% of the data
+        return S  # np.random.normal(mu, sigma)
+
     def do_the_magic(self, candle_info):
         """
         This is where all the magic happens.
@@ -299,8 +326,8 @@ class NaiveBot:
         """
         current_time = candle_info[0]
         current_price = candle_info[1]
-        max_open_period = self.run_params.selling_points[0][0]
-        S = self.current_balance * self.run_params.stake_percentage  # Stake amount to be used for a new trade
+        # max_open_period = self.run_params.selling_points[0][0]
+
         # pwt : Present Working Trade
         # max_loss = self.run_params.selling_points[-1][1]
 
@@ -315,35 +342,38 @@ class NaiveBot:
         #     should_open = decided
 
         # Open a new trade if possible
-        if self.pwt is None and S >= 10 and self.current_balance >= self.margin_factor * S:
-            self.pwt = Trade(buy_time=current_time, buy_price=current_price,
-                             stake=S)
-            self.pwt.opening_balance = self.current_balance
-            self.add_params_to_present_trade()
-            self.pwt.margin_amount = self.margin_factor * self.pwt.stake
+        if self.pwt is None:
+            # S = self.get_stake_amount()  # Stake amount to be used for a new trade
+            S = self.current_balance * self.run_params.stake_percentage
+            if S >= 10 and self.current_balance >= self.margin_factor * S:
+                self.pwt = Trade(buy_time=current_time, buy_price=current_price,
+                                 stake=S)
+                self.pwt.opening_balance = self.current_balance
+                self.add_params_to_present_trade()
+                self.pwt.margin_amount = self.margin_factor * self.pwt.stake
 
-            # Get uuid and set it as the trade_id
-            # self.present_working_trade.id = self.get_new_trade_id()
+                # Get uuid and set it as the trade_id
+                # self.present_working_trade.id = self.get_new_trade_id()
 
-            # reduce the stake amount from current balance
-            self.current_balance -= self.pwt.stake * self.margin_factor
+                # reduce the stake amount from current balance
+                self.current_balance -= self.pwt.stake * self.margin_factor
 
-            if self.run_params.enable_forecast:
-                self.run_params.short = self.forecast_model.predict_short(current_time, current_price)
-                self.pwt.short = self.run_params.short
-                # print('Forecasted short at', current_time, 'for', self.run_params.short)
+                if self.run_params.enable_forecast:
+                    self.run_params.short = self.forecast_model.predict_short(current_time, current_price)
+                    self.pwt.short = self.run_params.short
+                    # print('Forecasted short at', current_time, 'for', self.run_params.short)
 
-            # Print the trade details
-            if self.bot_mode == BotMode.DRY_RUN:
-                print("\n")
-                print("New trade opened at {} at the buy price of {}".format(current_time, current_price))
+                # Print the trade details
+                if self.bot_mode == BotMode.DRY_RUN:
+                    print("\n")
+                    print("New trade opened at {} at the buy price of {}".format(current_time, current_price))
 
-            if self.bot_mode == BotMode.DRY_RUN:
-                send_open_alert(self.pwt)
+                if self.bot_mode == BotMode.DRY_RUN:
+                    send_open_alert(self.pwt)
+                    # Save trades to disk
+                    self.append_trades_to_csv(self.pwt)
 
-            self.trades.append(self.pwt)
-            # Save trades to disk
-            self.append_trades_to_csv(self.pwt)
+                self.trades.append(self.pwt)
 
         # Close for profit or convert the trade to a loss and open a new one
         if self.pwt is not None:
@@ -356,7 +386,7 @@ class NaiveBot:
 
             idx = self.trades.index(self.pwt)
             # Profit loop. Note that this takes only the current working trade into consideration
-            if pl_perc >= self.run_params.take_profit_percentage:
+            if pl_perc >= self.run_params.take_profit:
                 # add the profit amount to stake amount
                 pl_abs = self.pwt.stake * (pl_perc - self.fee_perc) / 100
                 pl_abs = self.pwt.leverage * pl_abs
@@ -380,7 +410,8 @@ class NaiveBot:
                     print("Present Trade closed at {} with profit percentage {}".format(current_time, pl_perc))
                     send_close_alert(self.trades[idx])
 
-                self.update_trade(self.trades[idx])
+                # Update trade in the csv file
+                # self.update_trade(self.trades[idx])
 
                 self.pwt = None
                 open_period = 0
@@ -402,14 +433,14 @@ class NaiveBot:
                                                                                               self.trades[idx].pl_abs))
                     send_close_alert(self.trades[idx])
 
-                self.update_trade(self.trades[idx])
+                # self.update_trade(self.trades[idx])
 
                 self.pwt = None
                 open_period = 0
 
-            if open_period >= max_open_period:
+            if open_period >= 1:  # If the trade is open for more than 1 day, move it to OPEN_FOR_LOSS
                 self.trades[idx].trade_status = TradeStatus.OPEN_FOR_LOSS
-                self.update_trade(self.trades[idx])
+                # self.update_trade(self.trades[idx])
                 # Open a new trade
                 self.pwt = None
 
@@ -421,7 +452,7 @@ class NaiveBot:
                 if trade.short:
                     pl_perc = -pl_perc
 
-                if pl_perc >= self.run_params.take_profit_percentage or open_period >= 1.6:
+                if pl_perc >= self.run_params.take_profit or open_period >= self.run_params.max_days:
                     pl_abs = trade.stake * (pl_perc - self.fee_perc) / 100
                     pl_abs = self.leverage * pl_abs
                     self.current_balance += (trade.margin_amount + pl_abs)
@@ -435,7 +466,7 @@ class NaiveBot:
                     self.trades[idx].trade_period = self.get_days_diff(self.trades[idx].sell_time,
                                                                        self.trades[idx].buy_time)
 
-                    self.update_trade(self.trades[idx])  # Update the trade to .csv
+                    # self.update_trade(self.trades[idx])  # Update the trade to .csv
 
                 # for period, stop_loss_percentage in self.run_params.selling_points:
                 #     if open_period >= period and -stop_loss_percentage <= pl_perc:
@@ -483,8 +514,7 @@ class NaiveBot:
                                                                                                   self.trades[
                                                                                                       idx].pl_abs))
                         send_close_alert(self.trades[idx])
-
-                    self.update_trade(self.trades[idx])
+                        self.update_trade(self.trades[idx])
 
     def append_trades_to_csv(self, trade):
         """

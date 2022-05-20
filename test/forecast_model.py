@@ -24,12 +24,14 @@ class ForecastModel:
     Class for the forecasting model
     """
 
-    def __init__(self, currency, base, back_test=False, start_date='', end_date='', model_retrain=False):
+    def __init__(self, currency, base, back_test=False, start_date='', end_date='', model_retrain=False,
+                 take_profit=1.0):
         self.back_test = back_test
         self.interval = '1h'  # Might be different, but for now it is 1 hour
         self.currency = currency
         self.base = base
         self.df = None
+        self.take_profit = take_profit
         self.data_file = currency + '_' + base + '_' + '_data_' + self.interval + '.csv'
         self.model_file = currency + '_' + base + '_' + '_model_' + self.interval + '.h5'
         self.model_scaler_file = currency + '_' + base + '_' + '_scaler_' + self.interval + '.pkl'
@@ -40,7 +42,7 @@ class ForecastModel:
             file_path = '../data/' + currency + '_' + base + '_' + self.interval + '_' + start_date + '_' + end_date + '.csv'
             # Download the file if it doesn't exist
             if os.path.isfile(file_path):
-                print('Loading data from file')
+                print('Loading backtest data from file... using it for forecasting by the model')
                 self.back_test_data = pd.read_csv(file_path)
             else:
                 print("Downloading price data for {}/{} for time period {} and {}...".format(currency, base, start_date,
@@ -367,10 +369,10 @@ class ForecastModel:
         # If at least one of the predicted values is greater than the current price by 1%, then we should go long
         for i in range(len(y_pred)):
             diff = (y_pred[i] - x_price) * 100 / x_price
-            if diff >= 0.2:
+            if diff >= self.take_profit:
                 # print('Model predicted - Long position! Difference:', diff)
                 return False
-            elif diff <= -0.2:
+            elif diff <= -self.take_profit:
                 # print('Model predicted - Short position! Difference:', diff)
                 return True
         # print('Model predicted - Long position! Because there is less than 1% price movement!')
