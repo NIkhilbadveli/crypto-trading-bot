@@ -28,6 +28,7 @@ class Trade:
         self.sell_price = sell_price
         self.trade_period = 0
         self.stake = stake
+        self.fee = 0
         self.pl_abs = pl_abs
         self.trade_status = TradeStatus.OPEN_FOR_PROFIT
         self.opening_balance = None
