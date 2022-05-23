@@ -84,7 +84,7 @@ class NaiveBot:
             self.starting_stake = starting_stake
             self.stake_percentage = stake_perc
             self.take_profit = take_profit
-            self.short = short
+            self.short = short  # Maybe it's better to remove it from run parameters.
             self.max_days = max_days
             self.compound = compound
             self.currency = None
@@ -364,7 +364,8 @@ class NaiveBot:
                     send_open_alert(self.pwt)
                     # Save trades to disk
 
-                if self.save_to_file: self.append_trades_to_csv(self.pwt)
+                if self.save_to_file:
+                    self.append_trades_to_csv(self.pwt)
 
                 self.trades.append(self.pwt)
 
@@ -520,8 +521,8 @@ class NaiveBot:
         df = pd.read_csv(self.trades_file)
         trades_list = []
         for _, row in df.iterrows():
-            if row['currency'] != self.run_params.currency or row['interval'] != self.run_params.interval \
-                    or row['short'] != self.run_params.short or row['compound'] != self.run_params.compound:
+            # Todo: Might need to check for other columns as well.
+            if row['currency'] != self.run_params.currency or row['interval'] != self.run_params.interval:
                 continue
             trade = Trade(buy_time=row['buy_time'], buy_price=row['buy_price'], stake=row['stake'])
             trade.id = row['id']
@@ -535,6 +536,10 @@ class NaiveBot:
             trade.trade_status = row['trade_status']
             trade.opening_balance = row['opening_balance']
             trade.closing_balance = row['closing_balance']
+            trade.trade_period = row['trade_period']
+            trade.fee = row['fee']
+            trade.leverage = row['leverage']
+            trade.margin_amount = row['margin_amount']
 
             trades_list.append(trade)
             if trade.trade_status == TradeStatus.OPEN_FOR_PROFIT:
@@ -550,19 +555,25 @@ class NaiveBot:
         Uses binance socket to listen for the price updates.
         :return:
         """
-        if self.forecast_model is None:
-            self.forecast_model = ForecastModel(currency, base)
+        if self.forecast_model is None and params.enable_forecast:
+            self.forecast_model = ForecastModel(currency, base, back_test=False, take_profit=params.take_profit)
+
         self.run_params = params
         self.run_params.currency = currency
         self.run_params.interval = interval
+        self.starting_balance = self.run_params.starting_balance
+        self.current_balance = self.starting_balance
         self.bot_mode = BotMode.DRY_RUN
-        self.current_balance = params.starting_balance
-        # self.current_stake = params.starting_stake
+        if self.run_params.leverage_enabled:
+            self.leverage = self.run_params.lev_mar[0]
+            self.margin_factor = self.run_params.lev_mar[1]
+
         self.update_trades_list()
 
         df = pd.DataFrame([trade.__dict__ for trade in self.trades])
         print('Existing trades from the csv file:-')
         print(df.tail())
+
         if self.pwt:
             print('\nPresent working trade:-')
             pp = pprint.PrettyPrinter(depth=4)
@@ -571,5 +582,6 @@ class NaiveBot:
             print('Current balance:- ', self.current_balance)
             # print('Current stake:-', self.current_stake)
             print('\n')
+
         socket_client = BinanceSocket(currency, base, interval, self)
         socket_client.start_listening()

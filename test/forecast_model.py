@@ -38,7 +38,7 @@ class ForecastModel:
         self.scaler = pickle.load(open(self.model_scaler_file, 'rb')) if os.path.isfile(
             self.model_scaler_file) else None
         self.model = keras.models.load_model(self.model_file) if os.path.isfile(self.model_file) else None
-        if self.back_test:
+        if self.back_test:  # I guess we're using it for dry run as well. Might have to restructure later.
             file_path = '../data/' + currency + '_' + base + '_' + self.interval + '_' + start_date + '_' + end_date + '.csv'
             # Download the file if it doesn't exist
             if os.path.isfile(file_path):
@@ -333,29 +333,31 @@ class ForecastModel:
         # return random.choice([True, False])
         p, q = 48, 24
         if not self.model:
-            # print('Model predicted - Long position! Because we have no model!')
+            if not self.back_test:
+                print('Model predicted - Long position! Because we have no model!')
             return False
 
-        # x_dt = datetime.fromtimestamp(x_timestamp / 1000)
-        # timestamp_48hrs_back = int((x_dt - timedelta(hours=48 + 33)).timestamp() * 1000)
-        #
-        # data = get_hourly_data(self.currency, self.base, start_timestamp=timestamp_48hrs_back,
-        #                        end_timestamp=x_timestamp)
-        #
-        # price_array, scaler = self.prepare_input(data, prediction_mode=True)
-        # past_data = price_array[:, 1:]
+        if not self.back_test:
+            x_dt = datetime.fromtimestamp(x_timestamp / 1000)
+            timestamp_48hrs_back = int((x_dt - timedelta(hours=48 + 33)).timestamp() * 1000)
 
-        # Using the index method
-        index, price_array = self.find_index(x_timestamp)
-        # print(index)
-        if index < p:
-            return False  # Going long position
-        # Get the past data
-        past_data = price_array[index - p:index, 1:]
+            data = get_hourly_data(self.currency, self.base, start_timestamp=timestamp_48hrs_back,
+                                   end_timestamp=x_timestamp)
+
+            price_array, scaler = self.prepare_input(data, prediction_mode=True)
+            past_data = price_array[:, 1:]
+        else:
+            # Using the index method
+            index, price_array = self.find_index(x_timestamp)
+            # print(index)
+            if index < p:
+                return False  # Going long position
+            # Get the past data
+            past_data = price_array[index - p:index, 1:]
         # print(past_data.shape)
 
         if past_data.shape != (p, 7):  # If the data is not correct dimension, return
-            # print('Model predicted - Long position! Because the data is not correct dimension!')
+            if not self.back_test: print('Model predicted - Long position! Because the data is not in correct shape!')
             return False
 
         past_data = past_data.reshape(1, p, past_data.shape[1])
@@ -370,10 +372,10 @@ class ForecastModel:
         for i in range(len(y_pred)):
             diff = (y_pred[i] - x_price) * 100 / x_price
             if diff >= self.take_profit:
-                # print('Model predicted - Long position! Difference:', diff)
+                if not self.back_test: print('Model predicted - Long position! Difference:', diff)
                 return False
             elif diff <= -self.take_profit:
-                # print('Model predicted - Short position! Difference:', diff)
+                if not self.back_test: print('Model predicted - Short position! Difference:', diff)
                 return True
-        # print('Model predicted - Long position! Because there is less than 1% price movement!')
+        if not self.back_test: print('Model predicted - Long position! Because there is less than 1% price movement!')
         return False
