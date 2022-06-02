@@ -10,12 +10,12 @@ import pandas as pd
 from get_data import ThreadWithResult
 
 # time_periods = [('2019-01-01', '2019-12-31'), ('2020-01-01', '2020-12-31'), ('2021-01-01', '2021-12-31')]
-time_periods = [('2022-04-01', '2022-04-30')]
+time_periods = [('2022-05-09', '2022-05-13')]
 
-currs = ['ETH']  # Currencies to test
+currs = ['EUR']  # Currencies to test
 sbs = [500]  # Starting balance
 mtas = [10]  # Minimum trade amounts
-tps = [0.5]  # Take profits
+tps = [0.2]  # Take profits
 mds = [1.6]  # Max days
 levs = [50]  # Leverages
 mfs = [1]  # Margin factors
@@ -23,7 +23,7 @@ stps = [0.05]  # Stake percentages
 
 groups = [time_periods, currs, sbs, mtas, tps, mds, levs, mfs, stps]
 
-base = 'USDT'
+base = 'USD'
 interval = '1h'
 columns = ['currency', 'date', 'starting_balance', 'min_trade_amt', 'leverage', 'margin_factor', 'take_profit',
            'max_days', 'stake_perc', 'num_trades', 'trades_per_day', 'short_perc', 'total_profit', 'total_fee',
@@ -54,21 +54,12 @@ def do_the_test():
         #     if os.path.isfile(fle):
         #         os.remove(fle)
         print('Testing for {} from {} to {}'.format(curr, sd, ed))
-        out = bot1.perform_backtest(currency=curr, base='USDT', start_date=sd, end_date=ed,
-                                    interval=Client.KLINE_INTERVAL_1MINUTE, params=params)
+        out = bot1.perform_backtest(currency=curr, base=base, start_date=sd, end_date=ed,
+                                    interval=interval, params=params)
         results.append(out)
         df = pd.DataFrame(results, columns=columns)
         print(df.to_string(index=True))
         df.to_csv('backtest_results.csv')
-
-
-# Profit factor greater than 3
-# Annual drawdown less than 3%
-# Annual return greater than 500%
-# Maximum daily low of -$1,000
-# Avg Daily profit greater than $1,000
-# Less than 5,000 trades annually
-# Greater than 253 trades annually
 
 s = 0
 data_thread = ThreadWithResult(target=do_the_test, daemon=True)

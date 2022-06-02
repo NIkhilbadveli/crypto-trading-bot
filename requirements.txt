@@ -11,3 +11,6 @@ websocket-client
 python-telegram-bot
 ta
 apscheduler
+ccxt
+python_deriv_api
+yfinance

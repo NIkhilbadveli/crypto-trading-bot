@@ -3,6 +3,7 @@ import time
 from datetime import datetime, timedelta
 from binance.client import Client
 import pandas as pd
+import yfinance as yf
 
 api_key = 'zlDM7tnQhO1knwggZcoT4IvGxD2qVppkdh02dTJxMHgHgsXpn8mIBLoYO12KQkNB'
 api_secret = 'TEb49wDTTYGk0KFEanI4DqShlFV9ZnFh9lLabHmvv7OHA8GSmHm5cdMBuYfn5rcC'
@@ -93,6 +94,19 @@ def get_hourly_data(cur, base, start_timestamp, end_timestamp):
         df.loc[:, ~df.columns.isin(['open_time', 'close_time', 'c2'])].astype(float)
     return df
 
+
+def get_data_forex(cur, base, start_date, end_date, frequency):
+    """
+    Get historical data from Binance
+    :param base:
+    :param cur:
+    :param start_date:
+    :param end_date:
+    :param frequency:
+    :return:
+    """
+
+    return yf.download(cur + base + '=X', start=start_date, end=end_date, interval=frequency)
 
 # data_df = get_historical_data('ETH', 'USDT', '2020-05-01', '2021-04-30', Client.KLINE_INTERVAL_1HOUR)
 # data_df.to_csv('eth_train_1h.csv')
