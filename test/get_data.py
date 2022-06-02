@@ -37,12 +37,6 @@ class ThreadWithResult(threading.Thread):
 def get_historical_data(cur, base, start_date, end_date, frequency):
     """
     Get historical data from Binance
-    :param base:
-    :param cur:
-    :param start_date:
-    :param end_date:
-    :param frequency:
-    :return:
     """
 
     # klines = client.get_historical_klines(cur + "USDT", frequency, start_date, end_date)
@@ -58,13 +52,47 @@ def get_historical_data(cur, base, start_date, end_date, frequency):
     data_thread = ThreadWithResult(target=get_klines, daemon=True)
     data_thread.start()
     while data_thread.is_alive():
-        print('Getting minute data from Binance...', str(timedelta(seconds=s)))
+        print('Getting historical data from Binance...', str(timedelta(seconds=s)))
         s += 1
         time.sleep(1)
     print('\n')
     klines = data_thread.result
     assert klines is not None, 'Klines is None'
-    print('Getting minute data from Binance... done. Preparing dataframe...')
+    print('Getting historical data from Binance... done. Preparing dataframe...')
+    df = pd.DataFrame(klines,
+                      columns=['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'c1', 'c2', 'c3',
+                               'c4',
+                               'c5'])
+    df.loc[:, ~df.columns.isin(['open_time', 'close_time', 'c2'])] = \
+        df.loc[:, ~df.columns.isin(['open_time', 'close_time', 'c2'])].astype(float)
+    return df
+
+
+def get_futures_data(cur, base, start_date, end_date, frequency):
+    """
+    Get historical data from Binance
+    """
+
+    # klines = client.get_historical_klines(cur + "USDT", frequency, start_date, end_date)
+
+    def get_klines():
+        """
+        Get klines from Binance
+        :return:
+        """
+        return client.futures_historical_klines(cur + base, frequency, start_date, end_date, limit=1000)
+
+    s = 0
+    data_thread = ThreadWithResult(target=get_klines, daemon=True)
+    data_thread.start()
+    while data_thread.is_alive():
+        print('Getting futures data from Binance...', str(timedelta(seconds=s)))
+        s += 1
+        time.sleep(1)
+    print('\n')
+    klines = data_thread.result
+    assert klines is not None, 'Klines is None'
+    print('Getting futures data from Binance... done. Preparing dataframe...')
     df = pd.DataFrame(klines,
                       columns=['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'c1', 'c2', 'c3',
                                'c4',

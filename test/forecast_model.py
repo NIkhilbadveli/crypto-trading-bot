@@ -15,7 +15,7 @@ import pickle
 import pandas as pd
 
 from datetime import datetime, timedelta
-from get_data import get_hourly_data, get_historical_data
+from get_data import get_futures_data
 from telegram_alerts import send_training_alert
 
 
@@ -32,9 +32,9 @@ class ForecastModel:
         self.base = base
         self.df = None
         self.take_profit = take_profit
-        self.data_file = currency + '_' + base + '_' + '_data_' + self.interval + '.csv'
-        self.model_file = currency + '_' + base + '_' + '_model_' + self.interval + '.h5'
-        self.model_scaler_file = currency + '_' + base + '_' + '_scaler_' + self.interval + '.pkl'
+        self.data_file = '../model_files/' + currency + '_' + base + '_' + '_data_' + self.interval + '.csv'
+        self.model_file = '../model_files/' + currency + '_' + base + '_' + '_model_' + self.interval + '.h5'
+        self.model_scaler_file = '../model_files/' + currency + '_' + base + '_' + '_scaler_' + self.interval + '.pkl'
         self.scaler = pickle.load(open(self.model_scaler_file, 'rb')) if os.path.isfile(
             self.model_scaler_file) else None
         self.model = keras.models.load_model(self.model_file) if os.path.isfile(self.model_file) else None
@@ -42,12 +42,12 @@ class ForecastModel:
             file_path = '../data/' + currency + '_' + base + '_' + self.interval + '_' + start_date + '_' + end_date + '.csv'
             # Download the file if it doesn't exist
             if os.path.isfile(file_path):
-                print('Loading backtest data from file... using it for forecasting by the model')
+                print('Loading data from file... using it for forecasting')
                 self.back_test_data = pd.read_csv(file_path)
             else:
                 print("Downloading price data for {}/{} for time period {} and {}...".format(currency, base, start_date,
                                                                                              end_date))
-                self.back_test_data = get_historical_data(currency, base, start_date, end_date, self.interval)
+                self.back_test_data = get_futures_data(currency, base, start_date, end_date, self.interval)
                 self.back_test_data.to_csv(file_path)
                 print("Downloading price data... Done")
 
@@ -126,7 +126,8 @@ class ForecastModel:
 
         # Get hourly data
         print('Getting hourly data starting one year back...')
-        data = get_hourly_data(self.currency, self.base, start_timestamp=start_date, end_timestamp=end_date)
+        data = get_futures_data(self.currency, self.base, start_date=start_date, end_date=end_date,
+                                frequency=self.interval)
         data.to_csv(self.data_file)  # Saving for later reference
         print('Got hourly data')
         print('Preparing data...')
@@ -143,7 +144,7 @@ class ForecastModel:
         history = model.fit(x_train, y_train, epochs=num_epochs, batch_size=mini_batch_size, shuffle=True,
                             verbose=verbose)
         print('Loss in the last epoch is:', history.history['loss'][-1])
-        y_pred = model.predict(x_test)
+        y_pred = model.predict(x_test, verbose=0)
         # Print mean absolute of percentage error
         # y_test = np.delete(y_test, np.where(y_test == 0), axis=0)
         # mape = np.mean(np.abs((y_test.flatten() - y_pred.flatten()) / y_test.flatten())) * 100
@@ -341,8 +342,8 @@ class ForecastModel:
             x_dt = datetime.fromtimestamp(x_timestamp / 1000)
             timestamp_48hrs_back = int((x_dt - timedelta(hours=48 + 33)).timestamp() * 1000)
 
-            data = get_hourly_data(self.currency, self.base, start_timestamp=timestamp_48hrs_back,
-                                   end_timestamp=x_timestamp)
+            data = get_futures_data(self.currency, self.base, start_date=timestamp_48hrs_back,
+                                    end_date=x_timestamp, frequency=self.interval)
 
             price_array, scaler = self.prepare_input(data, prediction_mode=True)
             past_data = price_array[:, 1:]
@@ -361,7 +362,7 @@ class ForecastModel:
             return False
 
         past_data = past_data.reshape(1, p, past_data.shape[1])
-        y_pred = self.model.predict(past_data)
+        y_pred = self.model.predict(past_data, verbose=0)
         y_pred = self.inverse_transform(y_pred)
 
         # Send telegram alert

@@ -1,16 +1,14 @@
 import itertools
-import os
-import threading
 import time
 from datetime import timedelta
 
 from binance import Client
-from naive_bot_options import NaiveBot
+from naive_bot import NaiveBot
 import pandas as pd
 from get_data import ThreadWithResult
 
 # time_periods = [('2019-01-01', '2019-12-31'), ('2020-01-01', '2020-12-31'), ('2021-01-01', '2021-12-31')]
-time_periods = [('2022-04-01', '2022-04-30')]
+time_periods = [('2022-01-01', '2022-05-31')]
 
 currs = ['ETH']  # Currencies to test
 sbs = [500]  # Starting balance
@@ -54,8 +52,8 @@ def do_the_test():
         #     if os.path.isfile(fle):
         #         os.remove(fle)
         print('Testing for {} from {} to {}'.format(curr, sd, ed))
-        out = bot1.perform_backtest(currency=curr, base='USDT', start_date=sd, end_date=ed,
-                                    interval=Client.KLINE_INTERVAL_1MINUTE, params=params)
+        out = bot1.perform_backtest(currency=curr, base=base, start_date=sd, end_date=ed,
+                                    interval=interval, params=params)
         results.append(out)
         df = pd.DataFrame(results, columns=columns)
         print(df.to_string(index=True))

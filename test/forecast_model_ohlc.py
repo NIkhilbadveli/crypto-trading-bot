@@ -15,7 +15,7 @@ import pickle
 import pandas as pd
 
 from datetime import datetime, timedelta
-from get_data import get_hourly_data, get_historical_data, get_data_forex
+from get_data import get_hourly_data, get_historical_data
 from telegram_alerts import send_training_alert
 
 
@@ -24,52 +24,35 @@ class ForecastModel:
     Class for the forecasting model
     """
 
-    def __init__(self, currency, base, back_test=False, start_date='', end_date='', model_retrain=False,
-                 take_profit=1.0):
+    def __init__(self, currency, base, back_test=False, start_date='', end_date='', model_retrain=False):
         self.back_test = back_test
         self.interval = '1h'  # Might be different, but for now it is 1 hour
         self.currency = currency
         self.base = base
         self.df = None
-        self.take_profit = take_profit
-        self.data_file = currency + '_' + base + '_' + '_data_' + self.interval + '.csv'
-        self.model_file = currency + '_' + base + '_' + '_model_' + self.interval + '.h5'
-        self.model_scaler_file = currency + '_' + base + '_' + '_scaler_' + self.interval + '.pkl'
+        self.data_file = '../model_files/' + currency + '_' + base + '_' + '_data_' + self.interval + '.csv'
+        self.model_file = '../model_files/' + currency + '_' + base + '_' + '_model_' + self.interval + '.h5'
+        self.model_scaler_file = '../model_files/' + currency + '_' + base + '_' + '_scaler_' + self.interval + '.pkl'
         self.scaler = pickle.load(open(self.model_scaler_file, 'rb')) if os.path.isfile(
             self.model_scaler_file) else None
         self.model = keras.models.load_model(self.model_file) if os.path.isfile(self.model_file) else None
-        if self.back_test:  # I guess we're using it for dry run as well. Might have to restructure later.
+        if self.back_test:
             file_path = '../data/' + currency + '_' + base + '_' + self.interval + '_' + start_date + '_' + end_date + '.csv'
             # Download the file if it doesn't exist
             if os.path.isfile(file_path):
-                print('Loading backtest data from file... using it for forecasting by the model')
-                df = pd.read_csv(file_path)
+                print('Loading data from file')
+                self.back_test_data = pd.read_csv(file_path)
             else:
                 print("Downloading price data for {}/{} for time period {} and {}...".format(currency, base, start_date,
                                                                                              end_date))
-                df = get_data_forex(currency, base, start_date, end_date, self.interval)
-                df['close_time'] = df.index.values
-                df.to_csv(file_path)
+                self.back_test_data = get_historical_data(currency, base, start_date, end_date, self.interval)
+                self.back_test_data.to_csv(file_path)
                 print("Downloading price data... Done")
 
-            df['close_time'] = pd.to_datetime(df['close_time'])
-            # Set close_time as index
-            df.set_index('close_time', inplace=True, drop=True)
-            self.back_test_data = df
-
-        if self.model is None:
+        if self.model is None and not self.back_test:
             # Schedule background training once a week
             # print('Training the model for the first time...')
-            if not self.back_test:
-                self.schedule_background_training()
-            else:
-                # Get start_date and end_date by subtracting 1 year from each
-                st_date = datetime.strptime(start_date, '%Y-%m-%d')
-                ed_date = datetime.strptime(end_date, '%Y-%m-%d')
-                st_date = (st_date - timedelta(days=365)).strftime('%Y-%m-%d')
-                # ed_date = (ed_date - timedelta(days=365)).strftime('%Y-%m-%d')
-                print('Training the model for the period {} to {}...'.format(st_date, start_date))
-                self.train_model(start_date=st_date, end_date=start_date)
+            self.schedule_background_training()
             # print('Training done! Model saved to: ' + self.model_file)
 
         self.scheduler = None
@@ -121,7 +104,7 @@ class ForecastModel:
         num_epochs = 100  # These settings are used while training the model
         mini_batch_size = 32
         dropout = 0.2
-        verbose = 0
+        verbose = 1 if self.back_test else 0
 
         # Only if the start_date and end_date are empty, train the model for the last 1 year data
         if start_date == '' and end_date == '':
@@ -132,8 +115,7 @@ class ForecastModel:
 
         # Get hourly data
         print('Getting hourly data starting one year back...')
-        data = get_data_forex(self.currency, self.base, start_date=start_date, end_date=end_date,
-                              frequency=self.interval)
+        data = get_hourly_data(self.currency, self.base, start_timestamp=start_date, end_timestamp=end_date)
         data.to_csv(self.data_file)  # Saving for later reference
         print('Got hourly data')
         print('Preparing data...')
@@ -141,24 +123,24 @@ class ForecastModel:
         print('Data prepared')
         print('Splitting data...')
         # Split data into training and test sets using the above function
-        x_train, y_train, x_test, y_test = self.make_train_test_data(p, q, price_array, test_size=0.1, shuffle=False)
+        x_train, y_train, x_test, y_test = self.make_train_test_data(p, q, price_array, test_size=0.2, shuffle=False)
         print('Shapes of x_train, x_test, y_train, y_test:', x_train.shape, x_test.shape, y_train.shape, y_test.shape)
         print('Splitting data done')
         print('Training model...')
         model = self.get_model(p, q, dropout, x_train)
         # Train model
-        history = model.fit(x_train, y_train, epochs=num_epochs, batch_size=mini_batch_size, shuffle=True,
-                            verbose=verbose)
+        history = model.fit(x_train, y_train, epochs=num_epochs, batch_size=mini_batch_size, validation_split=0.1,
+                            shuffle=True, verbose=verbose)
         print('Loss in the last epoch is:', history.history['loss'][-1])
         y_pred = model.predict(x_test)
         # Print mean absolute of percentage error
-        # y_test = np.delete(y_test, np.where(y_test == 0), axis=0)
-        # mape = np.mean(np.abs((y_test.flatten() - y_pred.flatten()) / y_test.flatten())) * 100
-        # print('mean absolute of percentage error:', mape)
+        y_test = np.delete(y_test, np.where(y_test == 0), axis=0)
+        mape = np.mean(np.abs((y_test.flatten() - y_pred.flatten()) / y_test.flatten())) * 100
+        print('mean absolute of percentage error:', mape)
 
         # Rename the model_file if model retrain is enabled
-        # if self.model_retrain:
-        #     self.model_file = self.model_file.replace('.h5', start_date + '_' + end_date + '.h5')
+        if self.model_retrain:
+            self.model_file = self.model_file.replace('.h5', start_date + '_' + end_date + '.h5')
 
         # Save the model to disk
         model.save(self.model_file)
@@ -199,36 +181,33 @@ class ForecastModel:
         :return:
         """
         # Create MACD using ta library
-        df['macd'] = MACD(close=df['Close'], window_slow=26, window_fast=12, window_sign=9).macd()
+        df['macd'] = MACD(close=df['close'], window_slow=26, window_fast=12, window_sign=9).macd()
 
         # Create ADX using ta library
-        df['adx'] = ADXIndicator(high=df['High'], low=df['Low'], close=df['Close'], window=14).adx()
+        df['adx'] = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14).adx()
 
         # Create upper and lower bollinger bands using ta library
-        indicator_bb = BollingerBands(close=df['Close'], window=20, window_dev=2)
+        indicator_bb = BollingerBands(close=df['close'], window=20, window_dev=2)
         df['upper_bb'] = indicator_bb.bollinger_hband()
         df['lower_bb'] = indicator_bb.bollinger_lband()
         df['bb_perc'] = indicator_bb.bollinger_pband()  # Percentage band
 
         # Create RSI using ta library
-        df['rsi'] = RSIIndicator(close=df['Close'], window=14).rsi()
+        df['rsi'] = RSIIndicator(close=df['close'], window=14).rsi()
 
         # Create Awesome Osciallator using ta library
-        df['ao'] = AwesomeOscillatorIndicator(high=df['High'], low=df['Low'], window1=5,
+        df['ao'] = AwesomeOscillatorIndicator(high=df['high'], low=df['low'], window1=5,
                                               window2=34).awesome_oscillator()
         return df
 
-    def inverse_transform(self, y):
+    def inverse_transform(self, y, mini, maxi):
         """
         This function is used to inverse transform the predicted values to the original scale.
-        :param y:
+        :param y: predicted values for a single time series sample
         :return:
         """
-        y_scaler = MinMaxScaler(feature_range=(0, 1))
-        y_scaler.min_, y_scaler.scale_ = self.scaler.min_[0], self.scaler.scale_[0]
-        y = y.reshape(-1, 1)
-        y = y_scaler.inverse_transform(y)
-        return y
+        print(mini, maxi)
+        return y * (maxi - mini) + mini
 
     def make_train_test_data(self, p, q, p_arr, test_size=0.2, shuffle=True):
         """
@@ -240,7 +219,7 @@ class ForecastModel:
         """
         # Make sequences of 100 previous values and take the next value as the target
         time_offset = p + q
-        step = 1
+        step = 1 if shuffle else p
         d = []
         for index in range(0, len(p_arr) - time_offset, step):
             d.append(p_arr[index: index + time_offset, :])
@@ -262,11 +241,14 @@ class ForecastModel:
         :return:
         """
         data.dropna(inplace=True)
-        df = data[['Close', 'High', 'Low']]
+        data['date'] = pd.to_datetime(data['open_time'], unit='ms')
+        data.drop_duplicates(subset='date', keep='first', inplace=True)
+        df = data[['date', 'close', 'high', 'low']]
+        df.set_index('date', inplace=True)
         # Add technical indicators
         df = self.add_technical_indicators(df)
         df = df.dropna()
-        df.drop(labels=['High', 'Low'], inplace=True, axis=1)
+        df.drop(labels=['high', 'low'], inplace=True, axis=1)
         price_array = df.to_numpy()
         # Preprocess data using MinMaxScaler
         # Todo: Handle first time training manually
@@ -278,31 +260,36 @@ class ForecastModel:
             price_array = scaler.transform(price_array)
         return price_array, scaler
 
-    def find_index(self, np_time):
+    def find_index(self, timestamp):
         """
         This function is used to find the index of the timestamp in the dataframe.
-        :param np_time:
+        :param timestamp:
         :return:
         """
         if self.df is None:
-            data = self.back_test_data  # This could be None
+            data = self.back_test_data  # This might be None
             data.dropna(inplace=True)
-            df = data[['Close', 'High', 'Low']]
+            data['date'] = pd.to_datetime(data['open_time'], unit='ms')
+            data.drop_duplicates(subset='date', keep='first', inplace=True)
+            df = data[['date', 'close', 'high', 'low', 'open']]
+            df.set_index('date', inplace=True)
             # Add technical indicators
             df = self.add_technical_indicators(df)
             df = df.dropna()
-            df.drop(labels=['High', 'Low'], inplace=True, axis=1)
+            # df.drop(labels=['high', 'low'], inplace=True, axis=1)
             self.df = df
 
         # Find the index of the closest past timestamp
         index = -1
         date_values = self.df.index.values
+        x_timestamp = int(timestamp)
         for i in range(len(date_values)):
-            if date_values[i] >= np_time:
+            cur_timestamp = int(str(pd.Timestamp(date_values[i]).value)[:13])
+            # assert len(str(cur_timestamp)) == len(str(x_timestamp))
+            if cur_timestamp >= x_timestamp:
                 index = i - 1
                 break
-
-        price_array = self.df.to_numpy()
+        price_array = self.df.to_numpy()  # This can be changed to some other place
         # Preprocess data using MinMaxScaler
         scaler = self.scaler if self.scaler else MinMaxScaler(feature_range=(0, 1))
         price_array = scaler.fit_transform(price_array)
@@ -330,51 +317,68 @@ class ForecastModel:
         """
         # Return randomly between True and False
         # return random.choice([True, False])
-        p, q = 48, 24
+        p, q = 5, 1
+        n_features = 10
         if not self.model:
-            if not self.back_test:
-                print('Model predicted - Long position! Because we have no model!')
+            print('Model predicted - Long position! Because we have no model!')
             return False
 
-        if not self.back_test:
-            x_dt = datetime.fromtimestamp(x_timestamp / 1000)
-            timestamp_48hrs_back = int((x_dt - timedelta(hours=48 + 33)).timestamp() * 1000)
+        # x_dt = datetime.fromtimestamp(x_timestamp / 1000)
+        # timestamp_48hrs_back = int((x_dt - timedelta(
+        #     hours=p + 33)).timestamp() * 1000)  # 33 is the no. of nulls added after technical indicator calculations
+        #
+        # data = get_hourly_data(self.currency, self.base, start_timestamp=timestamp_48hrs_back,
+        #                        end_timestamp=x_timestamp)
+        #
+        # price_array, scaler = self.prepare_input(data, prediction_mode=True)
+        # past_data = price_array[-p:, 1:]  # If data contains more than 48 hours, we will use the last 48 hours
 
-            data = get_hourly_data(self.currency, self.base, start_timestamp=timestamp_48hrs_back,
-                                   end_timestamp=x_timestamp)
-
-            price_array, scaler = self.prepare_input(data, prediction_mode=True)
-            past_data = price_array[:, 1:]
-        else:
-            # Using the index method
-            index, price_array = self.find_index(x_timestamp)
-            # print(index)
-            if index < p:
-                return False  # Going long position
-            # Get the past data
-            past_data = price_array[index - p:index, 1:]
+        # Using the index method
+        index, price_array = self.find_index(x_timestamp)
+        if index < p:
+            return False  # Going long position
+        # Get the past data
+        past_data = price_array[index - p:index, :]
         # print(past_data.shape)
 
-        if past_data.shape != (p, 7):  # If the data is not correct dimension, return
-            if not self.back_test: print('Model predicted - Long position! Because the data is not in correct shape!')
+        if past_data.shape != (p, n_features):  # If the data is not correct dimension, return
+            print('Model predicted - Long position! Because the data is not correct dimension!')
             return False
 
         past_data = past_data.reshape(1, p, past_data.shape[1])
         y_pred = self.model.predict(past_data)
-        y_pred = self.inverse_transform(y_pred)
-
+        y_pred = self.inverse_transform(y_pred, 0, 1)
+        return not self.convert_to_signal(x_price, y_pred[0][0], y_pred[0][1], y_pred[0][2], y_pred[0][3])
         # Send telegram alert
         # send_training_alert()
         # print(y_pred)
 
+        # a = np.arange(1, 25)
+        # b = y_pred.flatten()
+        #
+        # theta = np.polyfit(a, b, 1)
+        # # print('theta:', theta)
+        #
+        # y_line = theta[1] + theta[0] * a
+        #
+        # # Print the difference b/w the first and the last value of y_line
+        # diff = (y_line[-1] - y_line[0]) * 100 / y_line[0]
+        # # print('Difference between first and last value of y_line:', diff)
+        # if abs(diff) < 5:
+        #     # print('Model predicted - Long position! Because there is less than 3% diff in line fit!')
+        #     return False, False
+        # else:
+        #     return True, True if diff > 0 else False
+
         # If at least one of the predicted values is greater than the current price by 1%, then we should go long
-        for i in range(len(y_pred)):
-            diff = (y_pred[i] - x_price) * 100 / x_price
-            if diff >= self.take_profit:
-                if not self.back_test: print('Model predicted - Long position! Difference:', diff)
-                return False
-            elif diff <= -self.take_profit:
-                if not self.back_test: print('Model predicted - Short position! Difference:', diff)
-                return True
-        if not self.back_test: print('Model predicted - Long position! Because there is less than 1% price movement!')
+        # for i in range(len(y_pred)):
+        #     diff = (y_pred[i] - x_price) * 100 / x_price
+        #     if diff >= 1:
+        #         print('Model predicted - Long position! Difference:', diff)
+        #         return False
+        #     elif diff <= -1:
+        #         print('Model predicted - Short position! Difference:', diff)
+        #         return True
+
+        print('Model predicted - Long position! Because there is less than 1% price movement!')
         return False

@@ -17,7 +17,7 @@ from matplotlib import pyplot as plt
 from pandas.core.common import SettingWithCopyWarning
 
 from trade_class import Trade, TradeStatus
-from get_data import get_historical_data
+from get_data import get_futures_data
 from telegram_alerts import send_open_alert, send_close_alert, send_socket_disconnect
 from forecast_model import ForecastModel
 
@@ -114,7 +114,7 @@ class NaiveBot:
         self.skip_period = 60
         self.margin_factor = 1  # Amount of margin from the balance times the stake including the stake
         self.leverage = 1  # Amount of leverage to open the trade with
-        self.fee_perc = 0.02  # Percentage of the fee to be paid for each trade (opening / closing).
+        self.fee_perc = 0.04  # Percentage of the fee to be paid for each trade (opening / closing).
         self.trades_file = 'trades.csv'
         self.save_to_file = True
 
@@ -137,12 +137,12 @@ class NaiveBot:
         # Also, maybe cache the previously downloaded data
         file_path = '../data/' + currency + '_' + base + '_' + interval + '_' + start_date + '_' + end_date + '.csv'
         if os.path.isfile(file_path):
-            print('Loading data from file')
+            print('Loading data from file... using it for backtest')
             self.price_data = pd.read_csv(file_path)[['close_time', 'close']].to_numpy()
         else:
             print("Downloading price data for {}/{} for time period {} and {}...".format(currency, base, start_date,
                                                                                          end_date))
-            df = get_historical_data(currency, base, start_date, end_date, interval)
+            df = get_futures_data(currency, base, start_date, end_date, interval)
             df.to_csv(file_path)
             self.price_data = df[['close_time', 'close']].to_numpy()
             print("Downloading price data... Done")
@@ -152,8 +152,7 @@ class NaiveBot:
         self.run_params.interval = interval
         self.starting_balance = self.run_params.starting_balance
         self.current_balance = self.starting_balance
-        self.total_trading_period = (datetime.fromtimestamp(self.price_data[-1, 0] / 1000.0) - datetime.fromtimestamp(
-            self.price_data[0, 0] / 1000.0)).total_seconds() / 86400
+        self.total_trading_period = self.get_days_diff(self.price_data[-1, 0], self.price_data[0, 0])
         self.save_to_file = True
 
         if self.run_params.leverage_enabled:
