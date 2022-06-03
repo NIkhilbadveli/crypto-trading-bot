@@ -29,8 +29,10 @@ class BinanceSocket:
 
     def __init__(self, currency, base, interval, bot):
         self.bot = bot
+        contract_type = 'perpetual'
         # See if we can change the update frequency
-        self.socket_url = "wss://stream.binance.com:9443/ws/" + (currency + base).lower() + "@kline_" + interval
+        self.socket_url = "wss://fstream.binance.com/ws/" + (
+                currency + base).lower() + '_' + contract_type + "@continuousKline_" + interval
         print('Socket URL :', self.socket_url)
         self.ws = websocket.WebSocketApp(self.socket_url, on_open=lambda ws: self.on_open(ws),
                                          on_close=lambda ws: self.on_close(ws),
@@ -50,9 +52,14 @@ class BinanceSocket:
     def on_message(self, ws, message):
         json_message = json.loads(message)
         close_price = float(json_message['k']['c'])
-        close_time = int(json_message['k']['t'])
+        close_time = int(json_message['k']['T'])
+        # print('Close status:', json_message['k']['x'])
         try:
-            self.bot.do_the_magic((close_time, close_price))
+            if json_message['k']['x']:
+                # print('Close price: ', close_price)
+                # print('Close time: ', datetime.fromtimestamp(close_time / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                #       close_time)
+                self.bot.do_the_magic((close_time, close_price))
         except Exception as e:
             send_socket_disconnect()
             print(e)
@@ -135,6 +142,8 @@ class NaiveBot:
 
         # Try to do some basic validations here
         # Also, maybe cache the previously downloaded data
+        # print('Loading data from file... using it for backtest')
+        # self.price_data = pd.read_csv('live_data_tested.csv')[['close_time', 'close']].to_numpy()
         file_path = '../data/' + currency + '_' + base + '_' + interval + '_' + start_date + '_' + end_date + '.csv'
         if os.path.isfile(file_path):
             print('Loading data from file... using it for backtest')

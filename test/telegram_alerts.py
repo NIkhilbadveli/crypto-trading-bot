@@ -64,8 +64,8 @@ def send_training_alert():
     """
 
     today = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-    msg = 'Model used for making forecast - ' + today + '\n'
-    msg += "Check the logs: \n"
+    msg = 'Live test done - ' + today + '\n'
+    msg += "Manually do the backtest for the same period: \n"
 
     sent_body = (msg + "\n\n" +
                  "\t\tYour loving bot \u2764 \u2764 \u2764 \u2764\n")

@@ -59,9 +59,10 @@ class CcxtOrders:
         """
         Create an order using ccxt library.
         """
-        asset_price = self.exchange.fetch_ticker(self.symbol)['close']  # Might be different due to spread in live
-        order_amount = stake * self.leverage / asset_price  # After leverage
-        order_amount = self.exchange.amount_to_precision(symbol=self.symbol, amount=order_amount)
+        # asset_price = self.exchange.fetch_ticker(self.symbol)['close']  # Might be different due to spread in live
+        # order_amount = stake * self.leverage / asset_price  # After leverage
+        # order_amount = self.exchange.amount_to_precision(symbol=self.symbol, amount=order_amount)
+        order_amount = stake
         print('Order amount:', order_amount)
 
         if not short:

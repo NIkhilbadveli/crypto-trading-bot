@@ -342,8 +342,8 @@ class ForecastModel:
             x_dt = datetime.fromtimestamp(x_timestamp / 1000)
             timestamp_48hrs_back = int((x_dt - timedelta(hours=48 + 33)).timestamp() * 1000)
 
-            data = get_futures_data(self.currency, self.base, start_date=timestamp_48hrs_back,
-                                    end_date=x_timestamp, frequency=self.interval)
+            data = get_futures_data(self.currency, self.base, start_date=str(timestamp_48hrs_back),
+                                    end_date=str(x_timestamp), frequency=self.interval)
 
             price_array, scaler = self.prepare_input(data, prediction_mode=True)
             past_data = price_array[:, 1:]
