@@ -443,7 +443,7 @@ class NaiveBot:
                 self.pwt = None
                 open_period = 0
 
-            if open_period >= 1:  # If the trade is open for more than 1 day, move it to OPEN_FOR_LOSS
+            if open_period >= self.run_params.max_days:  # If the trade is open for more than 1 day, move it to OPEN_FOR_LOSS
                 self.trades[idx].trade_status = TradeStatus.OPEN_FOR_LOSS
                 if self.save_to_file:
                     self.update_trade(self.trades[idx])
