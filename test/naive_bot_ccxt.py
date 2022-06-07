@@ -54,6 +54,7 @@ class BinanceSocket:
         close_time = int(json_message['k']['T'])
         # print('Close status:', json_message['k']['x'])
         try:
+            self.bot.close_margin_call_trades(current_time=close_time, current_price=close_price)
             if json_message['k']['x']:
                 print('Current price: ', close_price)
                 print('Current time: ', datetime.fromtimestamp(close_time / 1000).strftime('%Y-%m-%d %H:%M:%S'),
@@ -83,7 +84,8 @@ class NaiveBot:
         Parameters for the back test
         """
 
-        def __init__(self, take_profit, short, max_days, starting_balance=500, min_trade_amt=10, starting_stake=100,
+        def __init__(self, take_profit, short, max_days, tp_days=1, starting_balance=500, min_trade_amt=10,
+                     starting_stake=100,
                      stake_perc=0.05, compound=False, enable_forecast=False, model_retrain=False,
                      leverage_enabled=False, lev_mar=(1, 1)):
             self.starting_balance = starting_balance
@@ -100,6 +102,7 @@ class NaiveBot:
             self.leverage_enabled = leverage_enabled
             self.lev_mar = lev_mar
             self.min_trade_amt = min_trade_amt
+            self.tp_days = tp_days
 
     def __init__(self):
         self.starting_balance = 500  # Default values
@@ -334,6 +337,19 @@ class NaiveBot:
         sigma = (S - mu) / 3  # 3 Standard deviations will cover 99.7% of the data
         return S  # np.random.normal(mu, sigma)
 
+    def close_margin_call_trades(self, current_time, current_price):
+        """Close a trade if its margin call at any time in between hours"""
+        for idx, trade in enumerate(self.trades):
+            if trade.trade_status in [TradeStatus.OPEN_FOR_PROFIT, TradeStatus.OPEN_FOR_LOSS]:
+                pl_perc = (current_price - trade.buy_price) * 100 / trade.buy_price
+                if trade.short:
+                    pl_perc = -pl_perc
+
+                if self.is_margin_call(pl_perc, trade):
+                    self.close_trade(trade, idx, close_by_margin_call=True)
+                    if trade.trade_status == TradeStatus.OPEN_FOR_PROFIT:
+                        self.pwt = None
+
     def close_trade(self, trade: Trade, idx, close_by_margin_call=False):
         """
         Closes a trade using ccxt_orders
@@ -392,10 +408,6 @@ class NaiveBot:
         """
         current_time = candle_info[0]
         current_price = candle_info[1]
-
-        if len(self.trades) >= 10:
-            self.socket_client.ws.close()
-            return
 
         if self.pwt is None and not self.ccxt_orders.are_there_open_orders():
             # S = self.get_stake_amount()  # Stake amount to be used for a new trade
@@ -462,7 +474,7 @@ class NaiveBot:
                 self.pwt = None
                 open_period = 0
 
-            if open_period >= 1:  # If the trade is open for more than 1 day, move it to OPEN_FOR_LOSS
+            if open_period >= self.run_params.tp_days:
                 self.trades[idx].trade_status = TradeStatus.OPEN_FOR_LOSS
                 if self.save_to_file:
                     self.update_trade(self.trades[idx])

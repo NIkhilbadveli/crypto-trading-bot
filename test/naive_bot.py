@@ -84,7 +84,8 @@ class NaiveBot:
         Parameters for the back test
         """
 
-        def __init__(self, take_profit, short, max_days, starting_balance=500, min_trade_amt=10, starting_stake=100,
+        def __init__(self, take_profit, short, max_days, tp_days=1, starting_balance=500, min_trade_amt=10,
+                     starting_stake=100,
                      stake_perc=0.2, compound=False, enable_forecast=False, model_retrain=False,
                      leverage_enabled=False, lev_mar=(1, 1)):
             self.starting_balance = starting_balance
@@ -101,6 +102,7 @@ class NaiveBot:
             self.leverage_enabled = leverage_enabled
             self.lev_mar = lev_mar
             self.min_trade_amt = min_trade_amt
+            self.tp_days = tp_days
 
     def __init__(self):
         self.starting_balance = 500  # Default values
@@ -116,7 +118,7 @@ class NaiveBot:
         warnings.simplefilter(action="ignore", category=SettingWithCopyWarning)
         warnings.simplefilter(action="ignore", category=RuntimeWarning)
         self.forecast_model = None
-        self.big_loss_trades = []
+        self.open_trades_history = []
         self.skip_count = 60
         self.skip_period = 60
         self.margin_factor = 1  # Amount of margin from the balance times the stake including the stake
@@ -271,6 +273,7 @@ class NaiveBot:
         # print('Total profit is {} for the {} days trading period'.format(total_profit, self.total_trading_period))
         roi = (total_profit * 100 / self.starting_balance) * (365 / self.total_trading_period)
         print('Projected yearly ROI is', roi, '%')
+        print('Max number of trades open at a time', max(self.open_trades_history))
         # print('Average profit per day is', total_profit / self.total_trading_period)
         out = [self.run_params.currency, self.run_params.starting_balance, self.run_params.min_trade_amt, self.leverage,
                self.margin_factor, self.run_params.take_profit, self.run_params.max_days,
@@ -331,6 +334,41 @@ class NaiveBot:
         sigma = (S - mu) / 3  # 3 Standard deviations will cover 99.7% of the data
         return S  # np.random.normal(mu, sigma)
 
+    def close_trade(self, current_time, current_price, pl_perc, idx, close_by_margin_call=False):
+        """
+        Closes a trade using ccxt_orders
+        """
+        if self.trades[idx] is None:
+            return False
+        # add the profit amount to stake amount
+        cur_stake_worth = self.trades[idx].stake * (1 + pl_perc / 100)
+        sell_fee = self.fee_perc * cur_stake_worth * self.leverage / 100
+        pl_abs = cur_stake_worth - self.trades[idx].stake
+        pl_abs = self.trades[idx].leverage * pl_abs  # Is this correct for leverage?
+
+        self.trades[idx].sell_time = current_time
+        self.trades[idx].sell_price = current_price
+        self.trades[idx].pl_abs = pl_abs if not close_by_margin_call else -0.98 * self.trades[idx].margin_amount
+        self.trades[idx].fee += sell_fee
+        self.trades[
+            idx].trade_status = TradeStatus.CLOSED if not close_by_margin_call else TradeStatus.CLOSED_BY_MARGIN_CALL
+        self.trades[idx].closing_balance = self.trades[idx].opening_balance + self.trades[idx].pl_abs - self.trades[
+            idx].fee
+        self.trades[idx].trade_period = self.get_days_diff(self.trades[idx].sell_time,
+                                                           self.trades[idx].buy_time)
+
+        self.current_balance += self.trades[idx].margin_amount + self.trades[idx].pl_abs - self.trades[idx].fee
+
+        # Print the trade details
+        if self.bot_mode == BotMode.DRY_RUN:
+            print("\n")
+            print("Present Trade closed at {} with profit percentage {}".format(current_time, pl_perc))
+            send_close_alert(self.trades[idx])
+
+        # Update trade in the csv file
+        if self.save_to_file:
+            self.update_trade(self.trades[idx])
+
     def do_the_magic(self, candle_info):
         """
         This is where all the magic happens.
@@ -340,6 +378,13 @@ class NaiveBot:
         current_time = candle_info[0]
         current_price = candle_info[1]
 
+        if len(self.trades) > 0:
+            open_trades_count = 0
+            for trade in self.trades:
+                if trade.trade_status in [1, 2]:
+                    open_trades_count += 1
+            self.open_trades_history.append(open_trades_count)
+
         if self.pwt is None:
             # S = self.get_stake_amount()  # Stake amount to be used for a new trade
             S = self.current_balance * self.run_params.stake_percentage
@@ -347,14 +392,11 @@ class NaiveBot:
                 buy_fee = self.fee_perc * S * self.leverage / 100
                 # Fee for opening a new trade. Should this include the leverage?
                 self.pwt = Trade(buy_time=current_time, buy_price=current_price,
-                                 stake=S - buy_fee)
+                                 stake=S)
                 self.pwt.fee = buy_fee
                 self.pwt.opening_balance = self.current_balance
                 self.add_params_to_present_trade()
                 self.pwt.margin_amount = self.margin_factor * self.pwt.stake
-
-                # Get uuid and set it as the trade_id
-                # self.present_working_trade.id = self.get_new_trade_id()
 
                 # reduce the stake amount from current balance
                 self.current_balance -= self.pwt.stake * self.margin_factor
@@ -368,8 +410,6 @@ class NaiveBot:
                 if self.bot_mode == BotMode.DRY_RUN:
                     print("\n")
                     print("New trade opened at {} at the buy price of {}".format(current_time, current_price))
-
-                if self.bot_mode == BotMode.DRY_RUN:
                     send_open_alert(self.pwt)
                     # Save trades to disk
 
@@ -381,73 +421,22 @@ class NaiveBot:
         # Close for profit or convert the trade to a loss and open a new one
         if self.pwt is not None:
             open_period = self.get_days_diff(current_time, self.pwt.buy_time)
-            pl_perc = \
-                (current_price - self.pwt.buy_price) * 100 / self.pwt.buy_price
+            pl_perc = (current_price - self.pwt.buy_price) * 100 / self.pwt.buy_price
 
-            if self.run_params.short:
+            if self.pwt.short:
                 pl_perc = -pl_perc
 
             idx = self.trades.index(self.pwt)
             # Profit loop. Note that this takes only the current working trade into consideration
-            if pl_perc >= self.run_params.take_profit:
-                # add the profit amount to stake amount
-                cur_stake_worth = self.pwt.stake * (1 + pl_perc / 100)
-                sell_fee = self.fee_perc * cur_stake_worth * self.leverage / 100
-                pl_abs = cur_stake_worth - self.pwt.stake
-                pl_abs = self.pwt.leverage * pl_abs - sell_fee  # Is this correct for leverage?
-                self.current_balance += self.pwt.margin_amount + pl_abs
-
-                self.trades[idx].sell_time = current_time
-                self.trades[idx].sell_price = current_price
-                self.trades[idx].pl_abs = pl_abs
-                self.trades[idx].trade_status = TradeStatus.CLOSED
-                self.trades[idx].closing_balance = self.trades[idx].opening_balance + pl_abs
-                self.trades[idx].trade_period = self.get_days_diff(self.trades[idx].sell_time,
-                                                                   self.trades[idx].buy_time)
-                self.trades[idx].fee += sell_fee
-
-                # Print the trade details
-                if self.bot_mode == BotMode.DRY_RUN:
-                    print("\n")
-                    print("Present Trade closed at {} with profit percentage {}".format(current_time, pl_perc))
-                    send_close_alert(self.trades[idx])
-
-                # Update trade in the csv file
-                if self.save_to_file:
-                    self.update_trade(self.trades[idx])
-
+            is_margin_call = self.is_margin_call(pl_perc, self.pwt)
+            if pl_perc >= self.run_params.take_profit or is_margin_call:
+                self.close_trade(current_time, current_price, pl_perc, idx, is_margin_call)
                 self.pwt = None
-                open_period = 0
 
-            # Margin call checking loop
-            if self.run_params.leverage_enabled and self.is_margin_call(pl_perc, self.pwt):
-                # Might have to include the sell_fee here. I don't know how it works.
-                self.trades[idx].sell_time = current_time
-                self.trades[idx].sell_price = current_price
-                self.trades[idx].pl_abs = -self.pwt.margin_amount
-                self.trades[idx].trade_status = TradeStatus.CLOSED_BY_MARGIN_CALL
-                self.trades[idx].closing_balance = self.trades[idx].opening_balance + self.trades[idx].pl_abs
-                self.trades[idx].trade_period = self.get_days_diff(self.trades[idx].sell_time,
-                                                                   self.trades[idx].buy_time)
-
-                # Print the trade details
-                if self.bot_mode == BotMode.DRY_RUN:
-                    print("\n")
-                    print("Present Trade closed at {} due to margin call with loss {}".format(current_time,
-                                                                                              self.trades[idx].pl_abs))
-                    send_close_alert(self.trades[idx])
-
-                if self.save_to_file:
-                    self.update_trade(self.trades[idx])
-
-                self.pwt = None
-                open_period = 0
-
-            if open_period >= self.run_params.max_days:  # If the trade is open for more than 1 day, move it to OPEN_FOR_LOSS
+            if open_period >= self.run_params.tp_days:
                 self.trades[idx].trade_status = TradeStatus.OPEN_FOR_LOSS
                 if self.save_to_file:
                     self.update_trade(self.trades[idx])
-                # Open a new trade
                 self.pwt = None
 
         # Handle any trades that are open for loss
@@ -458,46 +447,9 @@ class NaiveBot:
                 if trade.short:
                     pl_perc = -pl_perc
 
-                if pl_perc >= self.run_params.take_profit or open_period >= self.run_params.max_days:
-                    cur_stake_worth = trade.stake * (1 + pl_perc / 100)
-                    sell_fee = self.fee_perc * cur_stake_worth * self.leverage / 100
-                    pl_abs = cur_stake_worth - trade.stake
-                    pl_abs = self.leverage * pl_abs
-                    self.current_balance += trade.margin_amount + pl_abs - sell_fee
-                    # self.current_stake = self.dry_run_params.starting_stake
-                    # Update the trade status
-                    self.trades[idx].sell_time = current_time
-                    self.trades[idx].sell_price = current_price
-                    self.trades[idx].pl_abs = pl_abs
-                    self.trades[idx].trade_status = TradeStatus.CLOSED
-                    self.trades[idx].closing_balance = self.trades[idx].opening_balance + self.trades[
-                        idx].pl_abs - sell_fee
-                    self.trades[idx].trade_period = self.get_days_diff(self.trades[idx].sell_time,
-                                                                       self.trades[idx].buy_time)
-                    self.trades[idx].fee += sell_fee
-
-                    if self.save_to_file:
-                        self.update_trade(self.trades[idx])  # Update the trade to .csv
-
-                if self.run_params.leverage_enabled and self.is_margin_call(pl_perc, trade):
-                    # Todo: Add the fee logic here as well.
-                    self.trades[idx].sell_time = current_time
-                    self.trades[idx].sell_price = current_price
-                    self.trades[idx].pl_abs = -self.trades[idx].margin_amount
-                    self.trades[idx].trade_status = TradeStatus.CLOSED_BY_MARGIN_CALL
-                    self.trades[idx].closing_balance = self.trades[idx].opening_balance + self.trades[idx].pl_abs
-                    self.trades[idx].trade_period = self.get_days_diff(self.trades[idx].sell_time,
-                                                                       self.trades[idx].buy_time)
-
-                    # Print the trade details
-                    if self.bot_mode == BotMode.DRY_RUN:
-                        print("\n")
-                        print("Present Trade closed at {} due to margin call with loss {}".format(current_time,
-                                                                                                  self.trades[
-                                                                                                      idx].pl_abs))
-                        send_close_alert(self.trades[idx])
-                    if self.save_to_file:
-                        self.update_trade(self.trades[idx])
+                is_margin_call = self.is_margin_call(pl_perc, trade)
+                if pl_perc >= self.run_params.take_profit or open_period >= self.run_params.max_days or is_margin_call:
+                    self.close_trade(current_time, current_price, pl_perc, idx, is_margin_call)
 
     def append_trades_to_csv(self, trade):
         """
