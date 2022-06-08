@@ -108,5 +108,5 @@ def get_data_forex(cur, base, start_date, end_date, frequency):
 
     return yf.download(cur + base + '=X', start=start_date, end=end_date, interval=frequency)
 
-# data_df = get_historical_data('ETH', 'USDT', '2020-05-01', '2021-04-30', Client.KLINE_INTERVAL_1HOUR)
+# data_df = get_historical_data('ETH', 'USDT', '2020 - 2-05-01', '2021-04-30', Client.KLINE_INTERVAL_1HOUR)
 # data_df.to_csv('eth_train_1h.csv')

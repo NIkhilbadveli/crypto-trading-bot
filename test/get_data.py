@@ -73,7 +73,7 @@ def get_futures_data(cur, base, start_date, end_date, frequency):
     Get historical data from Binance
     """
 
-    # klines = client.get_historical_klines(cur + "USDT", frequency, start_date, end_date)
+    # return get_historical_data(cur, base, start_date, end_date, frequency)
 
     def get_klines():
         """
@@ -136,5 +136,5 @@ def get_data_forex(cur, base, start_date, end_date, frequency):
 
     return yf.download(cur + base + '=X', start=start_date, end=end_date, interval=frequency)
 
-# data_df = get_historical_data('ETH', 'USDT', '2020-05-01', '2021-04-30', Client.KLINE_INTERVAL_1HOUR)
-# data_df.to_csv('eth_train_1h.csv')
+# data_df = get_futures_data('BTC', 'USDT', '2018-07-05', '2019-01-01', Client.KLINE_INTERVAL_1HOUR)
+# print(len(data_df))

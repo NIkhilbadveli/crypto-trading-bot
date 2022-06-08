@@ -7,7 +7,7 @@ from naive_bot import NaiveBot
 import pandas as pd
 from get_data import ThreadWithResult
 
-# time_periods = [('2019-01-01', '2019-12-31'), ('2020-01-01', '2020-12-31'), ('2021-01-01', '2021-12-31')]
+# time_periods = [('2019-01-01', '2019-12-31'), ('2020 - 2-01-01', '2020 - 2-12-31'), ('2021-01-01', '2021-12-31')]
 time_periods = [('2022-01-01', '2022-05-31')]
 
 currs = ['BTC']  # Currencies to test

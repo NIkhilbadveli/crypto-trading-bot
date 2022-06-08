@@ -339,6 +339,7 @@ class NaiveBot:
 
     def close_margin_call_trades(self, current_time, current_price):
         """Close a trade if its margin call at any time in between hours"""
+        # What are the chances of both getting triggered?
         for idx, trade in enumerate(self.trades):
             if trade.trade_status in [TradeStatus.OPEN_FOR_PROFIT, TradeStatus.OPEN_FOR_LOSS]:
                 pl_perc = (current_price - trade.buy_price) * 100 / trade.buy_price
@@ -597,6 +598,8 @@ class NaiveBot:
             print('\n')
             print('Current balance:- ', self.current_balance)
             print('\n')
+        else:
+            print('No present working trade found!')
 
         self.socket_client = BinanceSocket(currency, base, interval, self)
         self.socket_client.start_listening()
