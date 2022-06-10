@@ -340,7 +340,7 @@ class ForecastModel:
 
         if not self.back_test:
             x_dt = datetime.fromtimestamp(x_timestamp / 1000)
-            timestamp_48hrs_back = int((x_dt - timedelta(hours=48 + 34)).timestamp() * 1000)
+            timestamp_48hrs_back = int((x_dt - timedelta(hours=48 + 33)).timestamp() * 1000)
 
             data = get_futures_data(self.currency, self.base, start_date=str(timestamp_48hrs_back),
                                     end_date=str(x_timestamp), frequency=self.interval)

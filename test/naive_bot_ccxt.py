@@ -36,6 +36,7 @@ class BinanceSocket:
         self.ws = websocket.WebSocketApp(self.socket_url, on_open=lambda ws: self.on_open(ws),
                                          on_close=lambda ws: self.on_close(ws),
                                          on_message=lambda ws, msg: self.on_message(ws, msg))
+        self.ms_count = 0
 
     def start_listening(self):
         print("Trying to start listening...")
@@ -52,9 +53,13 @@ class BinanceSocket:
         json_message = json.loads(message)
         close_price = float(json_message['k']['c'])
         close_time = int(json_message['k']['T'])
+        self.ms_count += 1
         # print('Close status:', json_message['k']['x'])
         try:
-            self.bot.close_margin_call_trades(current_time=close_time, current_price=close_price)
+            if self.ms_count == 20:
+                self.bot.close_margin_call_trades(current_time=close_time, current_price=close_price)
+                self.ms_count = 0
+
             if json_message['k']['x']:
                 print('Current price: ', close_price)
                 print('Current time: ', datetime.fromtimestamp(close_time / 1000).strftime('%Y-%m-%d %H:%M:%S'),
@@ -341,15 +346,16 @@ class NaiveBot:
         """Close a trade if its margin call at any time in between hours"""
         # What are the chances of both getting triggered?
         for idx, trade in enumerate(self.trades):
-            if trade.trade_status in [TradeStatus.OPEN_FOR_PROFIT, TradeStatus.OPEN_FOR_LOSS]:
-                pl_perc = (current_price - trade.buy_price) * 100 / trade.buy_price
-                if trade.short:
-                    pl_perc = -pl_perc
+            pl_perc = (current_price - trade.buy_price) * 100 / trade.buy_price
+            if trade.short:
+                pl_perc = -pl_perc
 
-                if self.is_margin_call(pl_perc, trade):
-                    self.close_trade(trade, idx, close_by_margin_call=True)
-                    if trade.trade_status == TradeStatus.OPEN_FOR_PROFIT:
-                        self.pwt = None
+            if trade.trade_status == TradeStatus.OPEN_FOR_PROFIT and self.is_margin_call(pl_perc, trade):
+                self.close_trade(trade, idx, close_by_margin_call=True)
+                self.pwt = None
+
+            if trade.trade_status == TradeStatus.OPEN_FOR_LOSS and self.is_margin_call(pl_perc, trade):
+                self.close_trade(trade, idx, close_by_margin_call=True)
 
     def close_trade(self, trade: Trade, idx, close_by_margin_call=False):
         """
