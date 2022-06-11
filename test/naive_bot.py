@@ -123,7 +123,7 @@ class NaiveBot:
         self.skip_period = 60
         self.margin_factor = 1  # Amount of margin from the balance times the stake including the stake
         self.leverage = 1  # Amount of leverage to open the trade with
-        self.fee_perc = 0.04  # Percentage of the fee to be paid for each trade (opening / closing).
+        self.fee_perc = 0.02  # Percentage of the fee to be paid for each trade (opening / closing).
         self.trades_file = 'trades.csv'
         self.save_to_file = True
 
@@ -179,11 +179,9 @@ class NaiveBot:
         i = 0
         while i < len(self.price_data):
             row = self.price_data[i]
-            closed = self.close_margin_call_trades(current_time=row[0], current_price=row[1])
-            # if closed:
-            #     i += 60
-            if (i + 1) % 60 == 0:
-                self.do_the_magic((row[0], row[1]))
+            # self.close_margin_call_trades(current_time=row[0], current_price=row[1])
+            # if (i + 1) % 60 == 0:
+            self.do_the_magic((row[0], row[1]))
             i += 1
         print("Performing backtest... Done")
         print("\n")
@@ -329,7 +327,7 @@ class NaiveBot:
         """Checks if a given trade will get a margin call"""
         if not trade:
             return False
-        return -pl_perc * trade.leverage * trade.stake / 100 >= 0.40 * trade.margin_amount
+        return -pl_perc * trade.leverage * trade.stake / 100 >= 0.5 * trade.margin_amount
 
     def get_days_diff(self, date1, date2):
         """
@@ -354,22 +352,20 @@ class NaiveBot:
         #                          self.trades)
         closed = False
         for idx, trade in enumerate(self.trades):
-            pl_perc = (current_price - trade.buy_price) * 100 / trade.buy_price
-            # open_period = self.get_days_diff(current_time, trade.buy_time)
-            if trade.short:
-                pl_perc = -pl_perc
+            if trade.trade_status == TradeStatus.OPEN_FOR_PROFIT:
+                pl_perc = (current_price - trade.buy_price) * 100 / trade.buy_price
+                # open_period = self.get_days_diff(current_time, trade.buy_time)
+                if trade.short:
+                    pl_perc = -pl_perc
 
-            # if open_period <= 0.35:
-            #     continue
+                if self.is_margin_call(pl_perc, trade):
+                    self.close_trade(current_time, current_price, pl_perc, idx, close_by_margin_call=True)
+                    self.pwt = None
+                    closed = True
 
-            if (trade.trade_status == TradeStatus.OPEN_FOR_PROFIT and self.is_margin_call(pl_perc, trade)):
-                self.close_trade(current_time, current_price, pl_perc, idx, close_by_margin_call=True)
-                self.pwt = None
-                closed = True
-
-            if (trade.trade_status == TradeStatus.OPEN_FOR_LOSS and self.is_margin_call(pl_perc, trade)):
-                self.close_trade(current_time, current_price, pl_perc, idx, close_by_margin_call=True)
-                closed = True
+            # if trade.trade_status == TradeStatus.OPEN_FOR_LOSS and self.is_margin_call(pl_perc, trade):
+            #     self.close_trade(current_time, current_price, pl_perc, idx, close_by_margin_call=True)
+            #     closed = True
 
         return closed
 
@@ -387,7 +383,8 @@ class NaiveBot:
 
         self.trades[idx].sell_time = current_time
         self.trades[idx].sell_price = current_price
-        self.trades[idx].pl_abs = pl_abs # if not close_by_margin_call else -0.40 * self.trades[idx].margin_amount
+        self.trades[idx].pl_abs = 0.75 * self.trades[idx].margin_amount if pl_abs > 0 else -0.5 * self.trades[
+            idx].margin_amount
         self.trades[idx].fee += sell_fee
         self.trades[
             idx].trade_status = TradeStatus.CLOSED if not close_by_margin_call else TradeStatus.CLOSED_BY_MARGIN_CALL
@@ -468,27 +465,27 @@ class NaiveBot:
             idx = self.trades.index(self.pwt)
             # Profit loop. Note that this takes only the current working trade into consideration
             is_margin_call = self.is_margin_call(pl_perc, self.pwt)
-            if pl_perc >= self.run_params.take_profit or is_margin_call:
+            if pl_perc >= self.run_params.take_profit or is_margin_call or open_period >= self.run_params.max_days:
                 self.close_trade(current_time, current_price, pl_perc, idx, close_by_margin_call=is_margin_call)
                 self.pwt = None
 
-            if open_period >= self.run_params.tp_days:
-                self.trades[idx].trade_status = TradeStatus.OPEN_FOR_LOSS
-                if self.save_to_file:
-                    self.update_trade(self.trades[idx])
-                self.pwt = None
+            # if open_period >= self.run_params.tp_days:
+            #     self.trades[idx].trade_status = TradeStatus.OPEN_FOR_LOSS
+            #     if self.save_to_file:
+            #         self.update_trade(self.trades[idx])
+            #     self.pwt = None
 
         # Handle any trades that are open for loss
-        for idx, trade in enumerate(self.trades):
-            if trade.trade_status == TradeStatus.OPEN_FOR_LOSS:
-                open_period = self.get_days_diff(current_time, trade.buy_time)
-                pl_perc = (current_price - trade.buy_price) * 100 / trade.buy_price
-                if trade.short:
-                    pl_perc = -pl_perc
-
-                is_margin_call = self.is_margin_call(pl_perc, trade)
-                if pl_perc >= self.run_params.take_profit or open_period >= self.run_params.max_days or is_margin_call:
-                    self.close_trade(current_time, current_price, pl_perc, idx, is_margin_call)
+        # for idx, trade in enumerate(self.trades):
+        #     if trade.trade_status == TradeStatus.OPEN_FOR_LOSS:
+        #         open_period = self.get_days_diff(current_time, trade.buy_time)
+        #         pl_perc = (current_price - trade.buy_price) * 100 / trade.buy_price
+        #         if trade.short:
+        #             pl_perc = -pl_perc
+        #
+        #         is_margin_call = self.is_margin_call(pl_perc, trade)
+        #         if pl_perc >= self.run_params.take_profit or open_period >= self.run_params.max_days or is_margin_call:
+        #             self.close_trade(current_time, current_price, pl_perc, idx, is_margin_call)
 
     def append_trades_to_csv(self, trade):
         """
