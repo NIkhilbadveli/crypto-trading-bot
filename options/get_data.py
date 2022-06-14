@@ -1,29 +1,23 @@
+import asyncio
+import json
 import threading
 import time
 from datetime import datetime, timedelta
 from binance.client import Client
 import pandas as pd
 import yfinance as yf
+from dateutil import parser
+from dateutil.tz import tz
+from deriv_api import DerivAPI
 
 api_key = 'zlDM7tnQhO1knwggZcoT4IvGxD2qVppkdh02dTJxMHgHgsXpn8mIBLoYO12KQkNB'
 api_secret = 'TEb49wDTTYGk0KFEanI4DqShlFV9ZnFh9lLabHmvv7OHA8GSmHm5cdMBuYfn5rcC'
 client = Client(api_key, api_secret)
 
-'''
-[
-    1499040000000,  # Open time
-    "0.01634790",  # Open
-    "0.80000000",  # High
-    "0.01575800",  # Low
-    "0.01577100",  # Close
-    "148976.11427815",  # Volume
-    1499644799999,  # Close time
-    "2434.19055334",  # Quote asset volume
-    308,  # Number of trades
-    "1756.87402397",  # Taker buy base asset volume
-    "28.46694368",  # Taker buy quote asset volume
-    "17928899.62484339"  # Can be ignored
-]'''
+deriv_api_key = 'O4WJddI6GWcNskz'
+deriv_app_id = 31998
+
+default_date = datetime(2019, 1, 1, tzinfo=tz.gettz('Europe/London'))
 
 
 class ThreadWithResult(threading.Thread):
@@ -34,58 +28,31 @@ class ThreadWithResult(threading.Thread):
         super().__init__(group=group, target=function, name=name, daemon=daemon)
 
 
-def get_historical_data(cur, base, start_date, end_date, frequency):
+def get_futures_data(cur, base, start_date, end_date, frequency):
     """
     Get historical data from Binance
-    :param base:
-    :param cur:
-    :param start_date:
-    :param end_date:
-    :param frequency:
-    :return:
     """
 
-    # klines = client.get_historical_klines(cur + "USDT", frequency, start_date, end_date)
+    # return get_historical_data(cur, base, start_date, end_date, frequency)
 
     def get_klines():
         """
         Get klines from Binance
         :return:
         """
-        return client.get_historical_klines(cur + base, frequency, start_date, end_date, limit=1000)
+        return client.futures_historical_klines(cur + base, frequency, start_date, end_date, limit=1000)
 
     s = 0
     data_thread = ThreadWithResult(target=get_klines, daemon=True)
     data_thread.start()
     while data_thread.is_alive():
-        print('Getting minute data from Binance...', str(timedelta(seconds=s)))
+        print('Getting futures data from Binance...', str(timedelta(seconds=s)))
         s += 1
         time.sleep(1)
     print('\n')
     klines = data_thread.result
     assert klines is not None, 'Klines is None'
-    print('Getting minute data from Binance... done. Preparing dataframe...')
-    df = pd.DataFrame(klines,
-                      columns=['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'c1', 'c2', 'c3',
-                               'c4',
-                               'c5'])
-    df.loc[:, ~df.columns.isin(['open_time', 'close_time', 'c2'])] = \
-        df.loc[:, ~df.columns.isin(['open_time', 'close_time', 'c2'])].astype(float)
-    return df
-
-
-def get_hourly_data(cur, base, start_timestamp, end_timestamp):
-    """
-    Get data in hourly intervals from Binance starting from a given timestamp
-    :param end_timestamp:
-    :param cur:
-    :param base:
-    :param start_timestamp:
-    :return:
-    """
-    # print('Getting hourly data from Binance...')
-    klines = client.get_historical_klines(cur + base, Client.KLINE_INTERVAL_1HOUR, start_str=start_timestamp,
-                                          end_str=str(end_timestamp), limit=1000)
+    print('Getting futures data from Binance... done. Preparing dataframe...')
     df = pd.DataFrame(klines,
                       columns=['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'c1', 'c2', 'c3',
                                'c4',
@@ -98,15 +65,79 @@ def get_hourly_data(cur, base, start_timestamp, end_timestamp):
 def get_data_forex(cur, base, start_date, end_date, frequency):
     """
     Get historical data from Binance
-    :param base:
-    :param cur:
-    :param start_date:
-    :param end_date:
-    :param frequency:
-    :return:
     """
 
     return yf.download(cur + base + '=X', start=start_date, end=end_date, interval=frequency)
 
-# data_df = get_historical_data('ETH', 'USDT', '2020 - 2-05-01', '2021-04-30', Client.KLINE_INTERVAL_1HOUR)
-# data_df.to_csv('eth_train_1h.csv')
+
+async def get_deriv_data(symbol, start_date, end_date, frequency):
+    """Use deriv API and download data then convert to df from json"""
+    deriv_api = DerivAPI(app_id=deriv_app_id)
+    authorize = await deriv_api.authorize(deriv_api_key)
+
+    start_epoch = int(parser.parse(start_date, default=default_date).timestamp())
+    end_epoch = int(parser.parse(end_date, default=default_date).timestamp())
+
+    freq_to_secs = {
+        '1h': 60 * 60,
+        '1m': 60,
+        '5m': 5 * 60,
+        '15m': 15 * 60,
+        '30m': 30 * 60,
+        '1d': 1440 * 60
+    }
+
+    # def get_klines():
+    #     """
+    #     Get klines from Binance
+    #     :return:
+    #     """
+    #     data_json = asyncio.run(deriv_api.ticks_history({
+    #         "ticks_history": symbol,
+    #         "adjust_start_time": 1,
+    #         "end": end_epoch,
+    #         "start": start_epoch,
+    #         "style": "candles",
+    #         "granularity": freq_to_secs[frequency]
+    #     }))
+    #     return data_json
+
+    # s = 0
+    # data_thread = ThreadWithResult(target=get_klines, daemon=True)
+    # data_thread.start()
+    # while data_thread.is_alive():
+    #     print('Fetching the data using deriv api...', str(timedelta(seconds=s)))
+    #     s += 30
+    #     time.sleep(30)
+    # print('\n')
+    # klines = data_thread.result
+    print('Fetching the data using deriv api...')
+    all_klines = []
+    while end_epoch > start_epoch:
+        klines = await deriv_api.ticks_history({
+            "ticks_history": symbol,
+            "adjust_start_time": 1,
+            "end": end_epoch,
+            "start": start_epoch,
+            "style": "candles",
+            "granularity": freq_to_secs[frequency]
+        })
+        all_klines.extend(klines['candles'])
+        end_epoch = klines['candles'][0]['epoch']
+        # end_epoch = cur_epoch - freq_to_secs[frequency]
+
+    # Get only the klines that are greater than or equal to start_epoch in case more are added.
+    all_klines = list(filter(lambda x: x['epoch'] >= start_epoch, all_klines))
+    # assert all_klines is not None, 'Klines is None'
+
+    print('Fetching the data using deriv api...Done. Preparing dataframe...')
+
+    # Todo: Why am I getting 5 more values when I try for a month data. I'll have to check the first and last value
+    df = pd.DataFrame(data=all_klines, columns=['close', 'epoch', 'high', 'low', 'open'])
+    df.drop_duplicates(inplace=True)
+    return df
+
+
+# data_df = asyncio.run(get_deriv_data('R_50', '2021-05-01', '2022-05-01', '1h'))
+# print(data_df.head())
+# print('Length', len(data_df))
