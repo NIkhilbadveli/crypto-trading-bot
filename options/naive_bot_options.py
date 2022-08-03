@@ -1,3 +1,4 @@
+import asyncio
 import json
 import math
 
@@ -5,7 +6,6 @@ from enum import IntEnum
 
 import pprint
 
-import numpy as np
 import pandas as pd
 
 from datetime import datetime
@@ -13,56 +13,52 @@ import websocket
 import os
 import warnings
 
-from matplotlib import pyplot as plt
 from pandas.core.common import SettingWithCopyWarning
 
 from trade_class import Trade, TradeStatus
-from get_data import get_futures_data
-from telegram_alerts import send_open_alert, send_close_alert, send_socket_disconnect
-from forecast_model import ForecastModel
+from get_data import get_deriv_data
+from telegram_alerts import send_socket_disconnect
+from options.forecast_model import ForecastModel
 
 
-class BinanceSocket:
-    """
-    WSS socket which streams binance kline data in real-time.
-    """
+class DerivSocket:
+    """Websocket code for interacting with Deriv API"""
 
-    def __init__(self, currency, base, interval, bot):
-        self.bot = bot
-        contract_type = 'perpetual'
-        # See if we can change the update frequency
-        self.socket_url = "wss://fstream.binance.com/ws/" + (
-                currency + base).lower() + '_' + contract_type + "@continuousKline_" + interval
-        print('Socket URL :', self.socket_url)
-        self.ws = websocket.WebSocketApp(self.socket_url, on_open=lambda ws: self.on_open(ws),
-                                         on_close=lambda ws: self.on_close(ws),
-                                         on_message=lambda ws, msg: self.on_message(ws, msg))
+    def __init__(self):
+        app_id = 32172
+        self.api_token = 'zQjGuhLj4w1f8Sv'
+        websocket.WebSocketApp("wss://ws.binaryws.com/websockets/v3?app_id=" + str(app_id),
+                               on_open=lambda ws: self.on_open(ws),
+                               on_close=lambda ws: self.on_close(ws),
+                               on_message=lambda ws, msg: self.on_message(ws, msg))
 
     def start_listening(self):
-        print("Trying to start listening...")
+        print('Starting to listen...')
         self.ws.run_forever()
 
     def on_open(self, ws):
         print("Socket connected!")
+        self.ws = ws
+        json_data = json.dumps({'authorize': self.api_token})
+        self.ws.send(json_data)
 
     def on_close(self, ws):
-        send_socket_disconnect()
         print("Socket disconnected!")
 
+    def send_msg_ws(self, json_data):
+        self.ws.send(json_data)
+        print('Sent: %s' % json_data)
+
     def on_message(self, ws, message):
-        json_message = json.loads(message)
-        close_price = float(json_message['k']['c'])
-        close_time = int(json_message['k']['T'])
-        # print('Close status:', json_message['k']['x'])
-        try:
-            if json_message['k']['x']:
-                # print('Close price: ', close_price)
-                # print('Close time: ', datetime.fromtimestamp(close_time / 1000).strftime('%Y-%m-%d %H:%M:%S'),
-                #       close_time)
-                self.bot.do_the_magic((close_time, close_price))
-        except Exception as e:
-            send_socket_disconnect()
-            print(e)
+        data = json.loads(message)
+        print('Data: %s' % message)  # Uncomment this line to see all response data.
+        if 'error' in data.keys():
+            print('Error Happened: %s' % message)
+        elif data["msg_type"] == 'proposal':
+            print("Contract : %s " % data['proposal']['longcode'])
+            print("Price : %s " % data['proposal']['display_value'])
+            print("Payout : %s " % data['proposal']['payout'])
+            print("Spot: %s " % data['proposal']['spot'])
 
 
 class BotMode(IntEnum):
@@ -84,7 +80,7 @@ class NaiveBot:
         Parameters for the back test
         """
 
-        def __init__(self, take_profit, short, max_days, tp_days=1, starting_balance=500, min_trade_amt=10,
+        def __init__(self, take_profit, short, max_hours, tp_days=1, starting_balance=500, min_trade_amt=10,
                      starting_stake=100,
                      stake_perc=0.2, compound=False, enable_forecast=False, model_retrain=False,
                      leverage_enabled=False, lev_mar=(1, 1)):
@@ -93,7 +89,7 @@ class NaiveBot:
             self.stake_percentage = stake_perc
             self.take_profit = take_profit
             self.short = short  # Maybe it's better to remove it from run parameters.
-            self.max_days = max_days
+            self.max_hours = max_hours
             self.compound = compound
             self.currency = None
             self.interval = None
@@ -118,7 +114,7 @@ class NaiveBot:
         warnings.simplefilter(action="ignore", category=SettingWithCopyWarning)
         warnings.simplefilter(action="ignore", category=RuntimeWarning)
         self.forecast_model = None
-        self.open_trades_history = []
+        self.big_loss_trades = []
         self.skip_count = 60
         self.skip_period = 60
         self.margin_factor = 1  # Amount of margin from the balance times the stake including the stake
@@ -126,6 +122,7 @@ class NaiveBot:
         self.fee_perc = 0.02  # Percentage of the fee to be paid for each trade (opening / closing).
         self.trades_file = 'trades.csv'
         self.save_to_file = True
+        self.pay_out = 1.85
 
     def perform_backtest(self, currency, base, start_date, end_date, interval, params: BackTestParams):
         """
@@ -144,26 +141,25 @@ class NaiveBot:
 
         # Try to do some basic validations here
         # Also, maybe cache the previously downloaded data
-        # print('Loading data from file... using it for backtest')
-        # self.price_data = pd.read_csv('live_data_tested.csv')[['close_time', 'close']].to_numpy()
         file_path = '../data/' + currency + '_' + base + '_' + interval + '_' + start_date + '_' + end_date + '.csv'
         if os.path.isfile(file_path):
             print('Loading data from file... using it for backtest')
-            self.price_data = pd.read_csv(file_path)[['close_time', 'close']].to_numpy()
+            df = pd.read_csv(file_path)
         else:
             print("Downloading price data for {}/{} for time period {} and {}...".format(currency, base, start_date,
                                                                                          end_date))
-            df = get_futures_data(currency, base, start_date, end_date, interval)
+            df = asyncio.run(get_deriv_data(currency, start_date, end_date, interval))
             df.to_csv(file_path)
-            self.price_data = df[['close_time', 'close']].to_numpy()
             print("Downloading price data... Done")
+
+        self.price_data = df[['close_time', 'close']].to_numpy()
 
         self.run_params = params
         self.run_params.currency = currency
         self.run_params.interval = interval
         self.starting_balance = self.run_params.starting_balance
         self.current_balance = self.starting_balance
-        self.total_trading_period = self.get_days_diff(self.price_data[-1, 0], self.price_data[0, 0])
+        self.total_trading_period = self.get_hours_diff(self.price_data[-1][0], self.price_data[0][0]) / 24
         self.save_to_file = True
 
         if self.run_params.leverage_enabled:
@@ -174,15 +170,10 @@ class NaiveBot:
         if os.path.isfile(self.trades_file):
             print('Deleting trades.csv file since it already exists')
             os.remove(self.trades_file)
-
+        # self.price_data = self.price_data[:int(len(self.price_data) / 2)]
         print("Performing backtest...")
-        i = 0
-        while i < len(self.price_data):
-            row = self.price_data[i]
-            # self.close_margin_call_trades(current_time=row[0], current_price=row[1])
-            # if (i + 1) % 60 == 0:
-            self.do_the_magic((row[0], row[1]))
-            i += 1
+        for row in self.price_data:
+            self.do_options_magic((row[0], row[1]))
         print("Performing backtest... Done")
         print("\n")
         tp = self.summarize_trades()
@@ -278,8 +269,9 @@ class NaiveBot:
                 short_count += 1
 
         # print('Total profit is {} for the {} days trading period'.format(total_profit, self.total_trading_period))
-        roi = ((total_profit - total_fee) * 100 / self.starting_balance) * (365 / self.total_trading_period)
-        print('Projected yearly ROI is', roi, '%')
+        roi = ((total_profit - total_fee) * 100 / self.starting_balance)
+        print('Projected yearly ROI is', roi * (365 / self.total_trading_period), '%')
+        print('Actual ROI in the trading period', roi, '%')
         # print('Max number of trades open at a time', max(self.open_trades_history))
         print('Avg. profit percentage',
               sum([pl for pl in pl_perc_arr if pl > 0]) / (len(self.trades) - no_of_margin_calls))
@@ -310,182 +302,92 @@ class NaiveBot:
         self.pwt.short = self.run_params.short
         self.pwt.leverage = self.leverage
 
-    def get_new_trade_id(self):
-        """
-        Returns a new trade id
-        """
-        return None
-        # if not os.path.exists(self.trades_file):
-        #     return 1
-        # df = pd.read_csv(self.trades_file)
-        # if len(df) == 0:
-        #     return 1
-        # else:
-        #     return df['id'].max() + 1
-
-    def is_margin_call(self, pl_perc, trade):
-        """Checks if a given trade will get a margin call"""
-        if not trade:
-            return False
-        return -pl_perc * trade.leverage * trade.stake / 100 >= 0.5 * trade.margin_amount
-
-    def get_days_diff(self, date1, date2):
+    def get_hours_diff(self, date1, date2):
         """
         Returns the number of days between two dates
         """
-        return (datetime.fromtimestamp(date1 / 1000.0) - datetime.fromtimestamp(
-            date2 / 1000.0)).total_seconds() / 86400
+        return (datetime.fromtimestamp(date1) - datetime.fromtimestamp(date2)).total_seconds() / 3600
 
-    def get_stake_amount(self):
-        """
-        Sample the stake amount from a normal distribution with min 10 and max 0.1% * B
-        :return:
-        """
-        S = self.current_balance * self.run_params.stake_percentage
-        mu = (10 + S) // 2
-        sigma = (S - mu) / 3  # 3 Standard deviations will cover 99.7% of the data
-        return S  # np.random.normal(mu, sigma)
-
-    def close_margin_call_trades(self, current_time, current_price):
-        """Close a trade if its margin call at any time in between hours"""
-        # filtered_trades = filter(lambda x: x.trade_status in [TradeStatus.OPEN_FOR_PROFIT, TradeStatus.OPEN_FOR_LOSS],
-        #                          self.trades)
-        closed = False
-        for idx, trade in enumerate(self.trades):
-            if trade.trade_status == TradeStatus.OPEN_FOR_PROFIT:
-                pl_perc = (current_price - trade.buy_price) * 100 / trade.buy_price
-                # open_period = self.get_days_diff(current_time, trade.buy_time)
-                if trade.short:
-                    pl_perc = -pl_perc
-
-                if self.is_margin_call(pl_perc, trade):
-                    self.close_trade(current_time, current_price, pl_perc, idx, close_by_margin_call=True)
-                    self.pwt = None
-                    closed = True
-
-            # if trade.trade_status == TradeStatus.OPEN_FOR_LOSS and self.is_margin_call(pl_perc, trade):
-            #     self.close_trade(current_time, current_price, pl_perc, idx, close_by_margin_call=True)
-            #     closed = True
-
-        return closed
-
-    def close_trade(self, current_time, current_price, pl_perc, idx, close_by_margin_call=False):
+    def close_trade(self, current_time, current_price, idx, win=False):
         """
         Closes a trade using ccxt_orders
         """
         if self.trades[idx] is None:
             return False
-        # add the profit amount to stake amount
-        cur_stake_worth = self.trades[idx].stake * (1 + pl_perc / 100)
-        sell_fee = self.fee_perc * cur_stake_worth * self.leverage / 100
-        pl_abs = cur_stake_worth - self.trades[idx].stake
-        pl_abs = self.trades[idx].leverage * pl_abs  # Is this correct for leverage?
 
         self.trades[idx].sell_time = current_time
         self.trades[idx].sell_price = current_price
-        self.trades[idx].pl_abs = 0.75 * self.trades[idx].margin_amount if pl_abs > 0 else -0.5 * self.trades[
-            idx].margin_amount
-        self.trades[idx].fee += sell_fee
-        self.trades[
-            idx].trade_status = TradeStatus.CLOSED if not close_by_margin_call else TradeStatus.CLOSED_BY_MARGIN_CALL
+        self.trades[idx].pl_abs = self.pay_out * self.trades[idx].stake if win else -self.trades[idx].stake
+        self.trades[idx].trade_status = TradeStatus.CLOSED if win else TradeStatus.CLOSED_BY_MARGIN_CALL
         self.trades[idx].closing_balance = self.trades[idx].opening_balance + self.trades[idx].pl_abs - self.trades[
             idx].fee
-        self.trades[idx].trade_period = self.get_days_diff(self.trades[idx].sell_time,
-                                                           self.trades[idx].buy_time)
+        self.trades[idx].trade_period = self.get_hours_diff(self.trades[idx].sell_time,
+                                                            self.trades[idx].buy_time)
 
         self.current_balance += self.trades[idx].margin_amount + self.trades[idx].pl_abs - self.trades[idx].fee
 
         # Print the trade details
         if self.bot_mode == BotMode.DRY_RUN:
             print("\n")
-            print("Present Trade closed at {} with profit percentage {}".format(current_time, pl_perc))
-            send_close_alert(self.trades[idx])
+            print("Present Trade closed at {} with profit in USD {}".format(current_time, self.trades[idx].pl_abs))
+            # send_close_alert(self.trades[idx])
 
         # Update trade in the csv file
         if self.save_to_file:
             self.update_trade(self.trades[idx])
 
-    def do_the_magic(self, candle_info):
+    def do_options_magic(self, candle_info):
         """
-        This is where all the magic happens.
+        Do the magic for options trading
         :param candle_info:
         :return:
         """
         current_time = candle_info[0]
         current_price = candle_info[1]
 
-        # if len(self.trades) > 0:
-        #     open_trades_count = 0
-        #     for trade in self.trades:
-        #         if trade.trade_status in [1, 2]:
-        #             open_trades_count += 1
-        #     self.open_trades_history.append(open_trades_count)
-
         if self.pwt is None:
-            # S = self.get_stake_amount()  # Stake amount to be used for a new trade
             S = self.current_balance * self.run_params.stake_percentage
+            # S = 25
             if S >= self.run_params.min_trade_amt and self.current_balance >= self.margin_factor * S:
-                buy_fee = self.fee_perc * S * self.leverage / 100
-                # Fee for opening a new trade. Should this include the leverage?
                 self.pwt = Trade(buy_time=current_time, buy_price=current_price,
                                  stake=S)
-                self.pwt.fee = buy_fee
                 self.pwt.opening_balance = self.current_balance
                 self.add_params_to_present_trade()
                 self.pwt.margin_amount = self.margin_factor * self.pwt.stake
-
-                # reduce the stake amount from current balance
-                self.current_balance -= self.pwt.stake * self.margin_factor
-
+                self.current_balance -= self.pwt.margin_amount
                 if self.run_params.enable_forecast:
+                    # self.run_params.short = not self.forecast_model.predict_short(current_time, current_price)
                     self.run_params.short = self.forecast_model.predict_short(current_time, current_price)
                     self.pwt.short = self.run_params.short
-                    # print('Forecasted short at', current_time, 'for', self.run_params.short)
-
-                # Print the trade details
-                if self.bot_mode == BotMode.DRY_RUN:
-                    print("\n")
-                    print("New trade opened at {} at the buy price of {}".format(current_time, current_price))
-                    send_open_alert(self.pwt)
-                    # Save trades to disk
 
                 if self.save_to_file:
                     self.append_trades_to_csv(self.pwt)
 
                 self.trades.append(self.pwt)
 
-        # Close for profit or convert the trade to a loss and open a new one
         if self.pwt is not None:
-            open_period = self.get_days_diff(current_time, self.pwt.buy_time)
-            pl_perc = (current_price - self.pwt.buy_price) * 100 / self.pwt.buy_price
+            open_period = self.get_hours_diff(current_time, self.pwt.buy_time)
+            pl_perc = \
+                (current_price - self.pwt.buy_price) * 100 / self.pwt.buy_price
 
-            if self.pwt.short:
+            if self.run_params.short:
                 pl_perc = -pl_perc
 
             idx = self.trades.index(self.pwt)
-            # Profit loop. Note that this takes only the current working trade into consideration
-            is_margin_call = self.is_margin_call(pl_perc, self.pwt)
-            if pl_perc >= self.run_params.take_profit or is_margin_call or open_period >= self.run_params.max_hours:
-                self.close_trade(current_time, current_price, pl_perc, idx, close_by_margin_call=is_margin_call)
-                self.pwt = None
 
-            # if open_period >= self.run_params.tp_days:
-            #     self.trades[idx].trade_status = TradeStatus.OPEN_FOR_LOSS
-            #     if self.save_to_file:
-            #         self.update_trade(self.trades[idx])
+            # if pl_perc >= self.run_params.take_profit:
+            #     self.close_trade(current_time, current_price, idx, win=False)
+            #     self.pwt = None
+            # elif open_period >= self.run_params.max_hours:
+            #     self.close_trade(current_time, current_price, idx, win=True)
             #     self.pwt = None
 
-        # Handle any trades that are open for loss
-        # for idx, trade in enumerate(self.trades):
-        #     if trade.trade_status == TradeStatus.OPEN_FOR_LOSS:
-        #         open_period = self.get_days_diff(current_time, trade.buy_time)
-        #         pl_perc = (current_price - trade.buy_price) * 100 / trade.buy_price
-        #         if trade.short:
-        #             pl_perc = -pl_perc
-        #
-        #         is_margin_call = self.is_margin_call(pl_perc, trade)
-        #         if pl_perc >= self.run_params.take_profit or open_period >= self.run_params.max_days or is_margin_call:
-        #             self.close_trade(current_time, current_price, pl_perc, idx, is_margin_call)
+            if pl_perc >= self.run_params.take_profit:
+                self.close_trade(current_time, current_price, idx, win=True)
+                self.pwt = None
+            elif open_period >= self.run_params.max_hours:
+                self.close_trade(current_time, current_price, idx, win=False)
+                self.pwt = None
 
     def append_trades_to_csv(self, trade):
         """
@@ -548,14 +450,14 @@ class NaiveBot:
 
         self.trades = trades_list
 
-    def dry_run(self, currency, base, interval, params: BackTestParams):
+    def dry_run(self, currency, base, interval, params=BackTestParams(0.5, True, 23)):
         """
         Creates a simulated live-run with demo account. This will also try to email the trades that happen as we go.
         Uses binance socket to listen for the price updates.
         :return:
         """
-        if self.forecast_model is None and params.enable_forecast:
-            self.forecast_model = ForecastModel(currency, base, back_test=False, take_profit=params.take_profit)
+        # if self.forecast_model is None and params.enable_forecast:
+        #     self.forecast_model = ForecastModel(currency, base, back_test=False, take_profit=params.take_profit)
 
         self.run_params = params
         self.run_params.currency = currency
@@ -567,20 +469,24 @@ class NaiveBot:
             self.leverage = self.run_params.lev_mar[0]
             self.margin_factor = self.run_params.lev_mar[1]
 
-        self.update_trades_list()
-
-        df = pd.DataFrame([trade.__dict__ for trade in self.trades])
-        print('Existing trades from the csv file:-')
-        print(df.tail())
-
-        if self.pwt:
-            print('\nPresent working trade:-')
-            pp = pprint.PrettyPrinter(depth=4)
-            pp.pprint(self.pwt.__dict__)
-            print('\n')
-            print('Current balance:- ', self.current_balance)
-            # print('Current stake:-', self.current_stake)
-            print('\n')
-
-        socket_client = BinanceSocket(currency, base, interval, self)
+        # self.update_trades_list()
+        #
+        # df = pd.DataFrame([trade.__dict__ for trade in self.trades])
+        # print('Existing trades from the csv file:-')
+        # print(df.tail())
+        #
+        # if self.pwt:
+        #     print('\nPresent working trade:-')
+        #     pp = pprint.PrettyPrinter(depth=4)
+        #     pp.pprint(self.pwt.__dict__)
+        #     print('\n')
+        #     print('Current balance:- ', self.current_balance)
+        #     # print('Current stake:-', self.current_stake)
+        #     print('\n')
+        json_data = json.dumps({"proposal": 1,
+                                "amount": 100, "barrier": "16789.1", "basis": "stake", "contract_type": "ONETOUCH",
+                                "currency": "USD", "duration": 24, "duration_unit": "h", "symbol": "R_100",
+                                "subscribe": 1})
+        socket_client = DerivSocket()
         socket_client.start_listening()
+        socket_client.send_msg_ws(json_data)

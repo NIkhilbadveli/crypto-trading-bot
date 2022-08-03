@@ -284,7 +284,7 @@ class NaiveBot:
         print('Projected yearly ROI is', roi, '%')
         # print('Average profit per day is', total_profit / self.total_trading_period)
         out = [self.run_params.currency, self.run_params.starting_balance, self.run_params.min_trade_amt, self.leverage,
-               self.margin_factor, self.run_params.take_profit, self.run_params.max_days,
+               self.margin_factor, self.run_params.take_profit, self.run_params.max_hours,
                self.run_params.stake_percentage]  # Settings
         num_trades = len(self.trades)
         short_perc = short_count / num_trades * 100
@@ -498,7 +498,7 @@ class NaiveBot:
                 # print('Open period', open_period)
                 # print('P/l percentage', pl_perc)
                 is_margin_call = self.is_margin_call(pl_perc, trade)
-                if pl_perc >= self.run_params.take_profit or open_period >= self.run_params.max_days or is_margin_call:
+                if pl_perc >= self.run_params.take_profit or open_period >= self.run_params.max_hours or is_margin_call:
                     # Close the trade
                     self.close_trade(trade, idx, close_by_margin_call=is_margin_call)
                     # if not close_status:

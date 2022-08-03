@@ -15,7 +15,7 @@ api_secret = 'TEb49wDTTYGk0KFEanI4DqShlFV9ZnFh9lLabHmvv7OHA8GSmHm5cdMBuYfn5rcC'
 client = Client(api_key, api_secret)
 
 deriv_api_key = 'O4WJddI6GWcNskz'
-deriv_app_id = 31998
+deriv_app_id = '31998'
 
 default_date = datetime(2019, 1, 1, tzinfo=tz.gettz('Europe/London'))
 
@@ -122,8 +122,9 @@ async def get_deriv_data(symbol, start_date, end_date, frequency):
             "style": "candles",
             "granularity": freq_to_secs[frequency]
         })
-        all_klines.extend(klines['candles'])
+        all_klines = (klines['candles']) + all_klines
         end_epoch = klines['candles'][0]['epoch']
+        time.sleep(0.5)
         # end_epoch = cur_epoch - freq_to_secs[frequency]
 
     # Get only the klines that are greater than or equal to start_epoch in case more are added.
@@ -132,12 +133,12 @@ async def get_deriv_data(symbol, start_date, end_date, frequency):
 
     print('Fetching the data using deriv api...Done. Preparing dataframe...')
 
-    # Todo: Why am I getting 5 more values when I try for a month data. I'll have to check the first and last value
     df = pd.DataFrame(data=all_klines, columns=['close', 'epoch', 'high', 'low', 'open'])
     df.drop_duplicates(inplace=True)
+    df['close_time'] = df['epoch'] + freq_to_secs[frequency] - 1
+    df.rename(columns={'epoch': 'open_time'}, inplace=True)
     return df
 
-
-# data_df = asyncio.run(get_deriv_data('R_50', '2021-05-01', '2022-05-01', '1h'))
+# data_df = asyncio.run(get_deriv_data('R_50', '2022-01-01', '2022-06-01', '1m'))
 # print(data_df.head())
 # print('Length', len(data_df))
